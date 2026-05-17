@@ -5,6 +5,11 @@ import re
 from datetime import datetime
 from typing import List, Optional
 import urllib.parse
+import asyncio
+import json
+import traceback
+import time
+from functools import partial
 
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
@@ -18,6 +23,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import httpx
+from groq import Groq
 
 load_dotenv()
 
@@ -36,6 +42,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ALGORITHM = "HS256"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -44,6 +51,35 @@ SCOPES = [
     "openid"
 ]
 
+def call_groq(prompt: str, system: str, max_tokens: int = 300) -> str:
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            client = Groq(api_key=GROQ_API_KEY)
+            completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_completion_tokens=max_tokens,
+                top_p=1,
+                stream=False,
+                stop=None
+            )
+            content = completion.choices[0].message.content
+            return content.strip() if content else None
+        except Exception as e:
+            error_str = str(e)
+            if '429' in error_str:
+                wait_time = 2 * (attempt + 1)
+                print(f"Rate limit hit, waiting {wait_time}s before retry {attempt+1}/{max_retries}")
+                time.sleep(wait_time)
+                continue
+            print(f"Groq error: {e}")
+            return None
+    return None
 
 def make_flow():
     return Flow.from_client_config(
@@ -60,10 +96,8 @@ def make_flow():
         redirect_uri=REDIRECT_URI
     )
 
-
 def create_jwt(data: dict):
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
-
 
 def decode_jwt(token: str):
     try:
@@ -71,14 +105,12 @@ def decode_jwt(token: str):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     token = auth_header.split(" ")[1]
     return decode_jwt(token)
-
 
 def parse_email_body(payload, limit=None):
     body_html = ""
@@ -121,7 +153,6 @@ def parse_email_body(payload, limit=None):
         
     return body
 
-
 def parse_from(from_header):
     from_name = from_header
     from_email = from_header
@@ -134,11 +165,9 @@ def parse_from(from_header):
         from_name = from_header.strip()
     return from_name, from_email
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 @app.get("/auth/login")
 def login():
@@ -153,7 +182,6 @@ def login():
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     return {"auth_url": auth_url}
 
-
 @app.get("/auth/callback")
 async def callback(
     code: str,
@@ -165,7 +193,6 @@ async def callback(
 ):
     try:
         async with httpx.AsyncClient() as client:
-            # Exchange code for tokens directly
             token_resp = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -184,7 +211,6 @@ async def callback(
 
             access_token = token_data["access_token"]
 
-            # Get user info
             user_resp = await client.get(
                 "https://www.googleapis.com/oauth2/v2/userinfo",
                 headers={"Authorization": f"Bearer {access_token}"}
@@ -213,7 +239,6 @@ def me(user=Depends(get_current_user)):
         "picture": user.get("picture")
     }
 
-
 @app.get("/emails")
 def list_emails(after: Optional[int] = None, user=Depends(get_current_user)):
     try:
@@ -222,7 +247,6 @@ def list_emails(after: Optional[int] = None, user=Depends(get_current_user)):
 
         query = "label:INBOX"
         if after:
-            # after parameter in Gmail query is in seconds
             query += f" after:{after}"
 
         results = service.users().messages().list(
@@ -274,7 +298,6 @@ def list_emails(after: Optional[int] = None, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/emails/{message_id}")
 def get_email(message_id: str, user=Depends(get_current_user)):
     try:
@@ -313,6 +336,151 @@ def get_email(message_id: str, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def parse_priority_json(raw: str) -> dict:
+    fallback = {
+        "priority": "normal",
+        "reason": "Could not analyze",
+        "deadline": None,
+        "requires_reply": False
+    }
+    if not raw:
+        return fallback
+    try:
+        clean = re.sub(r'```json\s*', '', raw)
+        clean = re.sub(r'```\s*', '', clean)
+        clean = clean.strip()
+        match = re.search(r'\{.*\}', clean, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return json.loads(clean)
+    except:
+        return fallback
+
+@app.post("/ai/analyze")
+async def analyze_email(
+    request: Request, 
+    user=Depends(get_current_user)
+):
+    body = await request.json()
+    from_name = body.get("from_name", "")
+    subject = body.get("subject", "")
+    body_preview = body.get("body_preview", "")[:400]
+    email_id = body.get("email_id", "")
+
+    combined_prompt = f"""Analyze this email and respond with ONLY a valid JSON object, no markdown, no explanation:
+{{
+  "priority": "urgent" or "normal" or "low",
+  "reason": "one sentence why",
+  "deadline": "deadline phrase or null",
+  "requires_reply": true or false,
+  "summary": "exactly 2 sentences about what this email is and what action is needed",
+  "draft_reply": "3 sentence professional reply signed as Yeshwanth"
+}}
+
+From: {from_name}
+Subject: {subject}
+Preview: {body_preview}"""
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        raw = await loop.run_in_executor(
+            None,
+            partial(call_groq, combined_prompt,
+            "You are an email assistant. Reply only with valid JSON exactly as instructed. No markdown, no explanation.",
+            400)
+        )
+
+        data = parse_priority_json(raw)
+
+        return {
+            "email_id": email_id,
+            "priority": data.get("priority", "normal"),
+            "reason": data.get("reason", ""),
+            "deadline": data.get("deadline", None),
+            "requires_reply": data.get("requires_reply", False),
+            "summary": data.get("summary", body_preview[:200]),
+            "draft_reply": data.get("draft_reply", "Could not generate draft.")
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"Analyze error for {email_id}: {traceback.format_exc()}")
+        return {
+            "email_id": email_id,
+            "priority": "normal",
+            "reason": "Analysis failed",
+            "deadline": None,
+            "requires_reply": False,
+            "summary": body_preview[:200],
+            "draft_reply": "AI unavailable — please try again."
+        }
+
+@app.post("/ai/analyze-batch")
+async def analyze_batch(
+    request: Request,
+    user=Depends(get_current_user)
+):
+    body = await request.json()
+    emails = body.get("emails", [])[:5]
+    results = {}
+
+    for email in emails:
+        try:
+            email_id = email.get("id", "")
+            from_name = email.get("from_name", "")
+            subject = email.get("subject", "")
+            body_preview = email.get("body_preview", "")[:400]
+
+            combined_prompt = f"""Analyze this email and respond with ONLY a valid JSON object, no markdown, no explanation:
+{{
+  "priority": "urgent" or "normal" or "low",
+  "reason": "one sentence why",
+  "deadline": "deadline phrase or null",
+  "requires_reply": true or false,
+  "summary": "exactly 2 sentences about what this email is and what action is needed",
+  "draft_reply": "3 sentence professional reply signed as Yeshwanth"
+}}
+
+From: {from_name}
+Subject: {subject}
+Preview: {body_preview}"""
+
+            loop = asyncio.get_event_loop()
+
+            raw = await loop.run_in_executor(
+                None,
+                partial(call_groq, combined_prompt,
+                "You are an email assistant. Reply only with valid JSON.",
+                400)
+            )
+
+            data = parse_priority_json(raw)
+
+            results[email_id] = {
+                "priority": data.get("priority", "normal"),
+                "reason": data.get("reason", ""),
+                "deadline": data.get("deadline", None),
+                "requires_reply": data.get("requires_reply", False),
+                "summary": data.get("summary", body_preview[:200]),
+                "draft_reply": data.get("draft_reply", "Could not generate draft.")
+            }
+
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            import traceback
+            print(f"Batch analyze error for {email.get('id')}: {traceback.format_exc()}")
+            results[email.get("id", "")] = {
+                "priority": "normal",
+                "reason": "Analysis failed",
+                "deadline": None,
+                "requires_reply": False,
+                "summary": None,
+                "draft_reply": None
+            }
+
+    return {"results": results}
 
 if __name__ == "__main__":
     import uvicorn

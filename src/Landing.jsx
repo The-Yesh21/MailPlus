@@ -50,6 +50,53 @@ const Landing = ({ onLogin }) => {
           max-width: 100vw;
         }
 
+        /* Logo Animations */
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-6px); }
+        }
+        @keyframes glowPulse {
+          0%, 100% { filter: drop-shadow(0 0 8px rgba(240,165,0,0.3)); }
+          50% { filter: drop-shadow(0 0 20px rgba(240,165,0,0.7)); }
+        }
+
+        .navbar-logo {
+          height: 36px;
+          width: auto;
+          opacity: 0;
+          animation: fadeIn 0.6s ease forwards;
+          transition: transform 0.2s ease, filter 0.2s ease;
+          will-change: transform;
+        }
+        .navbar-logo:hover {
+          transform: scale(1.05);
+          filter: drop-shadow(0 0 8px rgba(240, 165, 0, 0.3));
+        }
+
+        .hero-logo {
+          height: 80px;
+          width: auto;
+          opacity: 0;
+          animation: 
+            slideDown 0.8s ease 0.2s forwards,
+            float 3s ease-in-out infinite 1s,
+            glowPulse 2.5s ease-in-out infinite 1s;
+          will-change: transform;
+          margin-bottom: 32px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          * { animation: none !important; transition: none !important; }
+        }
+
         /* Utility */
         .fade-in {
           opacity: 0;
@@ -292,14 +339,12 @@ const Landing = ({ onLogin }) => {
       `}</style>
 
       <nav>
-        <div className="logo">
-          <div className="logo-dot" />
-          MailPulse
-        </div>
+        <img src="/logo.png" alt="MailPulse" className="navbar-logo" />
         <button className="nav-signin" onClick={onLogin}>Sign in</button>
       </nav>
 
       <section className="hero fade-in">
+        <img src="/logo.png" alt="MailPulse" className="hero-logo" />
         <div className="floating-cards">
           <div className="mock-card card-1">
             <div className="line" style={{ width: '40%' }}></div>
@@ -410,10 +455,7 @@ const Landing = ({ onLogin }) => {
       </section>
 
       <section className="footer fade-in">
-        <div className="logo">
-          <div className="logo-dot" />
-          MailPulse
-        </div>
+        <img src="/logo.png" alt="MailPulse" className="navbar-logo" style={{ marginBottom: '16px' }} />
         <p className="tagline">Your inbox, briefed.</p>
         <button className="btn-amber" onClick={onLogin}>Get Started Free</button>
         <p className="copyright">© 2025 MailPulse · Built for people who get too many emails</p>

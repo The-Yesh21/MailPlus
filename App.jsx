@@ -69,8 +69,19 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('All Mail');
   const [fullBodies, setFullBodies] = useState({}); // Store full email bodies by id
   const [isFetchingBody, setIsFetchingBody] = useState(false);
+  const [aiResults, setAiResults] = useState({});
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [analyzingIds, setAnalyzingIds] = useState(new Set());
 
   const API_BASE = "http://localhost:8000";
+
+  const AttractiveLoader = ({ text = "Processing" }) => (
+    <div className="attractive-loader">
+      <div className="pulse-ring" />
+      <span className="shimmer-text">{text}</span>
+    </div>
+  );
 
   // Auth & Token Management
   useEffect(() => {
@@ -79,6 +90,7 @@ const App = () => {
 
     if (token) {
       localStorage.setItem('mp_token', token);
+      setIsTransitioning(true); // Start transition when token detected
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
     }
@@ -133,6 +145,7 @@ const App = () => {
     if (mails.length === 0) setIsLoading(true);
     
     try {
+      const startTime = Date.now();
       const response = await fetch(`${API_BASE}/emails${afterParam}`, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -166,13 +179,24 @@ const App = () => {
           if (!selectedMailId && combined.length > 0) {
             setSelectedMailId(combined[0].id);
           }
+          
+          // Trigger AI analysis for the first 10 emails
+          analyzeBatch(combined.slice(0, 10));
+
           return combined;
         });
+      }
+
+      // Ensure minimum 1.2s transition
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 1200) {
+        await new Promise(resolve => setTimeout(resolve, 1200 - elapsed));
       }
     } catch (error) {
       console.error("Failed to fetch emails:", error);
     } finally {
       setIsLoading(false);
+      setIsTransitioning(false); // End transition
     }
   };
 
@@ -212,7 +236,23 @@ const App = () => {
     if (activeTab === 'Awaiting Reply') {
       return mails.filter(m => !m.is_read);
     }
-    // All other tabs (Priority Feed, All Mail) show all emails newest first
+    if (activeTab === 'Priority Feed') {
+      return mails
+        .filter(m => {
+          const ai = aiResults[m.id];
+          return ai && (ai.priority === 'urgent' || ai.requires_reply);
+        })
+        .sort((a, b) => {
+          const aiA = aiResults[a.id];
+          const aiB = aiResults[b.id];
+          if (aiA.priority === 'urgent' && aiB.priority !== 'urgent') return -1;
+          if (aiA.priority !== 'urgent' && aiB.priority === 'urgent') return 1;
+          if (aiA.requires_reply && !aiB.requires_reply) return -1;
+          if (!aiA.requires_reply && aiB.requires_reply) return 1;
+          return (b.internal_date || 0) - (a.internal_date || 0);
+        });
+    }
+    // All other tabs (All Mail) show all emails newest first
     return mails;
   };
 
@@ -220,6 +260,67 @@ const App = () => {
     setIsScanning(true);
     await fetchEmails();
     setIsScanning(false);
+  };
+
+  const analyzeEmail = async (mail) => {
+    const token = localStorage.getItem('mp_token');
+    if (!token) return;
+
+    setAnalyzingIds(prev => new Set(prev).add(mail.id));
+    try {
+      const response = await fetch(`${API_BASE}/ai/analyze`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email_id: mail.id,
+          subject: mail.subject,
+          from_name: mail.from_name,
+          body_preview: mail.body_preview,
+          snippet: mail.snippet
+        })
+      });
+      const data = await response.json();
+      setAiResults(prev => ({ ...prev, [mail.id]: data }));
+      return data;
+    } catch (error) {
+      console.error("Failed to analyze email:", error);
+    } finally {
+      setAnalyzingIds(prev => {
+        const next = new Set(prev);
+        next.delete(mail.id);
+        return next;
+      });
+    }
+  };
+
+  const analyzeBatch = async (batch) => {
+    const token = localStorage.getItem('mp_token');
+    if (!token || batch.length === 0) return;
+
+    // Filter out already analyzed emails
+    const toAnalyze = batch.filter(m => !aiResults[m.id]);
+    if (toAnalyze.length === 0) return;
+
+    setIsAnalyzing(true);
+    try {
+      const response = await fetch(`${API_BASE}/ai/analyze-batch`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ emails: toAnalyze })
+      });
+      const data = await response.json();
+      setAiResults(prev => ({ ...prev, ...data.results }));
+    } catch (error) {
+      console.error("Failed to analyze batch:", error);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const fetchFullEmail = async (id) => {
@@ -291,7 +392,86 @@ const App = () => {
         body { background-color: #0D1117; color: #E6EDF3; font-family: 'DM Sans', sans-serif; overflow: hidden; }
         .app-container { display: flex; height: 100vh; width: 100vw; user-select: none; }
 
-        .sidebar { width: 220px; background-color: #0D1117; border-right: 1px solid #30363D; display: flex; flex-direction: column; padding: 24px 16px; flex-shrink: 0; overflow-y: auto; }
+        /* Logo & Transition Styles */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes slideInLeft {
+          from { opacity: 0; transform: translateX(-10px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes bouncyScale {
+          0% { opacity: 0; transform: scale(0.8); }
+          100% { opacity: 1; transform: scale(1.0); }
+        }
+        @keyframes glowPulse {
+          0%, 100% { filter: drop-shadow(0 0 10px rgba(240,165,0,0.3)); }
+          50% { filter: drop-shadow(0 0 25px rgba(240,165,0,0.7)); }
+        }
+
+        .sidebar-logo {
+          height: 28px;
+          width: auto;
+          animation: slideInLeft 0.5s ease forwards;
+          transition: transform 0.15s ease;
+          will-change: transform;
+          margin-bottom: 32px;
+        }
+        .sidebar-logo:hover {
+          transform: scale(1.03);
+        }
+
+        .login-logo-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin-bottom: 40px;
+        }
+        .login-logo {
+          height: 64px;
+          width: auto;
+          animation: 
+            bouncyScale 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+            glowPulse 4s ease-in-out infinite;
+          will-change: transform;
+          margin-bottom: 16px;
+        }
+        .login-tagline {
+          font-family: 'Instrument Serif', serif;
+          font-size: 20px;
+          color: #8B949E;
+        }
+
+        .transition-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background-color: #0D1117;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          transition: opacity 0.5s ease;
+        }
+        .transition-logo {
+          height: 96px;
+          width: auto;
+          animation: glowPulse 2s ease-in-out infinite;
+          will-change: transform;
+          margin-bottom: 24px;
+        }
+        .transition-text {
+          font-size: 14px;
+          color: #F0A500;
+          opacity: 0.8;
+          font-weight: 500;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          * { animation: none !important; transition: none !important; }
+        }
+
+        .sidebar { width: 220px;
+ background-color: #0D1117; border-right: 1px solid #30363D; display: flex; flex-direction: column; padding: 24px 16px; flex-shrink: 0; overflow-y: auto; }
         .user-profile { margin-bottom: 32px; display: flex; flex-direction: column; align-items: center; text-align: center; }
         .user-avatar { width: 48px; height: 48px; border-radius: 50%; border: 1px solid #30363D; margin-bottom: 12px; }
         .user-name { font-size: 13px; font-weight: 600; color: #E6EDF3; }
@@ -306,6 +486,11 @@ const App = () => {
         .stat-card { background-color: #161B22; border: 1px solid #30363D; padding: 12px; border-radius: 10px; }
         .stat-value { font-size: 18px; font-weight: 700; display: block; }
         .stat-label { font-size: 10px; color: #8B949E; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 4px; }
+
+        .analyzing-indicator { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; padding: 0 8px; }
+        .amber-dot { width: 8px; height: 8px; background-color: #F0A500; border-radius: 50%; animation: pulse-amber 1.5s infinite; }
+        @keyframes pulse-amber { 0% { opacity: 0.4; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.4; transform: scale(0.8); } }
+        .analyzing-text { font-size: 14px; color: #8B949E; }
 
         .nav-section { margin-bottom: 24px; }
         .nav-title { font-size: 11px; font-weight: 600; color: #484F58; margin-bottom: 12px; padding-left: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -371,7 +556,54 @@ const App = () => {
         @keyframes wave { 0%, 100% { height: 6px; } 50% { height: 24px; } }
         .briefing-info { font-size: 13px; color: #E6EDF3; font-weight: 500; }
         .whatsapp-btn { background-color: transparent; color: #F0A500; font-size: 13px; font-weight: 600; border: none; }
+
+        /* Attractive Loader Styles */
+        .attractive-loader {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 16px;
+          padding: 32px;
+          min-height: 120px;
+          width: 100%;
+        }
+        .pulse-ring {
+          width: 32px;
+          height: 32px;
+          border: 3px solid #F0A50015;
+          border-radius: 50%;
+          position: relative;
+        }
+        .pulse-ring::after {
+          content: "";
+          position: absolute;
+          top: -3px; left: -3px; right: -3px; bottom: -3px;
+          border: 3px solid #F0A500;
+          border-radius: 50%;
+          border-top-color: transparent;
+          animation: spin 0.8s linear infinite;
+        }
+        .shimmer-text {
+          font-size: 11px;
+          font-weight: 700;
+          color: #F0A500;
+          letter-spacing: 1.2px;
+          text-transform: uppercase;
+          animation: pulse-opacity 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-opacity {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
       `}</style>
+
+      {isTransitioning && (
+        <div className="transition-overlay">
+          <img src="/logo.png" alt="MailPulse" className="transition-logo" />
+          <div className="transition-text">Setting up your inbox...</div>
+        </div>
+      )}
 
       {/* Sidebar */}
       <aside className="sidebar">
@@ -382,15 +614,12 @@ const App = () => {
           <button className="signout-btn" onClick={handleLogout}>Sign out</button>
         </div>
 
-        <div className="logo">
-          <div className="logo-dot" />
-          MailPulse
-        </div>
+        <img src="/logo.png" alt="MailPulse" className="sidebar-logo" />
 
         <div className="stats-grid">
           <div className="stat-card">
             <span className="stat-value" style={{ color: '#F0A500' }}>
-              {mails.filter(m => m.tag === 'urgent').length}
+              {mails.filter(m => aiResults[m.id]?.priority === 'urgent').length}
             </span>
             <span className="stat-label">Urgent</span>
           </div>
@@ -402,6 +631,13 @@ const App = () => {
           </div>
         </div>
 
+        {isAnalyzing && (
+          <div className="analyzing-indicator">
+            <div className="amber-dot" />
+            <span className="analyzing-text">Analyzing emails...</span>
+          </div>
+        )}
+
         <div className="nav-section">
           <h3 className="nav-title">Navigation</h3>
           {['Priority Feed', 'All Mail', 'Awaiting Reply'].map(tab => (
@@ -409,8 +645,14 @@ const App = () => {
               key={tab}
               className={`nav-item ${activeTab === tab ? 'active' : ''}`}
               onClick={() => setActiveTab(tab)}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
             >
               {tab}
+              {tab === 'Priority Feed' && mails.filter(m => aiResults[m.id]?.priority === 'urgent').length > 0 && (
+                <span style={{ fontSize: '10px', backgroundColor: '#F0A500', color: '#0D1117', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                  {mails.filter(m => aiResults[m.id]?.priority === 'urgent').length}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -435,6 +677,15 @@ const App = () => {
                 <div className="skeleton-line short" />
               </div>
             ))
+          ) : activeTab === 'Priority Feed' && isAnalyzing && getFilteredMails().length === 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100px', gap: '12px' }}>
+              <div className="amber-dot" />
+              <span className="analyzing-text">Scanning for priority emails...</span>
+            </div>
+          ) : activeTab === 'Priority Feed' && !isAnalyzing && getFilteredMails().length === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100px', color: '#484F58', fontSize: '14px' }}>
+              No urgent emails right now
+            </div>
           ) : (
             getFilteredMails().map(mail => (
               <div 
@@ -453,7 +704,16 @@ const App = () => {
                 <div className="mail-subject">{mail.subject}</div>
                 <div className="mail-snippet">{mail.snippet}</div>
                 <div className="tag-group">
-                  {mail.tag && (
+                  {aiResults[mail.id] ? (
+                    <>
+                      {aiResults[mail.id].priority === 'urgent' && (
+                        <div className="tag-badge" style={{ backgroundColor: '#F0A50015', color: '#F0A500', border: '1px solid #F0A50030' }}>URGENT</div>
+                      )}
+                      {aiResults[mail.id].requires_reply && aiResults[mail.id].priority !== 'urgent' && (
+                        <div className="tag-badge" style={{ backgroundColor: '#1AAB8A15', color: '#1AAB8A', border: '1px solid #1AAB8A30' }}>REPLY</div>
+                      )}
+                    </>
+                  ) : mail.tag && (
                     <div className="tag-badge" style={{ backgroundColor: `${getTagColor(mail.tag)}15`, color: getTagColor(mail.tag) }}>
                       {mail.tag}
                     </div>
@@ -506,8 +766,17 @@ const App = () => {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3h1V5.73c-.6-.34-1-1.01-1-1.73a2 2 0 0 1 2-2M9 9a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1H9m3 2a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2z" />
                     </svg>
-                    <span className="card-title">{fullBodies[selectedMail.id] ? "Full Email Content" : "Email preview"}</span>
+                    <span className="card-title">{aiResults[selectedMail.id] ? "AI Context Summary" : (fullBodies[selectedMail.id] ? "Full Email Content" : "Email preview")}</span>
                   </div>
+                  {!aiResults[selectedMail.id] && !analyzingIds.has(selectedMail.id) && (
+                    <button 
+                      className="scan-btn" 
+                      style={{ fontSize: '10px', padding: '4px 10px', backgroundColor: '#F0A50015', color: '#F0A500' }}
+                      onClick={() => analyzeEmail(selectedMail)}
+                    >
+                      Analyze this email
+                    </button>
+                  )}
                   {!fullBodies[selectedMail.id] && !isFetchingBody && (
                     <button 
                       className="scan-btn" 
@@ -519,7 +788,19 @@ const App = () => {
                   )}
                   {isFetchingBody && <div className="spinner" style={{ width: '14px', height: '14px' }} />}
                 </div>
-                {fullBodies[selectedMail.id] ? (
+                {analyzingIds.has(selectedMail.id) ? (
+                  <AttractiveLoader text="Analyzing with AI..." />
+                ) : aiResults[selectedMail.id] ? (
+                  <>
+                    <p className="summary-text">{aiResults[selectedMail.id].summary || "No summary available."}</p>
+                    {aiResults[selectedMail.id].deadline && (
+                      <div className="tag-badge" style={{ backgroundColor: '#ff444415', color: '#ff4444', marginTop: '16px', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm1 5h-2v7h6v-2h-4V7z"/></svg>
+                        Deadline: {aiResults[selectedMail.id].deadline}
+                      </div>
+                    )}
+                  </>
+                ) : fullBodies[selectedMail.id] ? (
                   <EmailPreview html={fullBodies[selectedMail.id]} />
                 ) : (
                   <p className="summary-text" style={{ maxHeight: '200px', overflowY: 'hidden' }}>
@@ -549,12 +830,38 @@ const App = () => {
                   </svg>
                   <span className="card-title">AI Draft Reply</span>
                 </div>
-                <div className="draft-area">AI drafting is coming in the next iteration...</div>
-                <div className="action-group">
-                  <button className="btn btn-primary">Send reply</button>
-                  <button className="btn btn-secondary">Regenerate</button>
-                  <button className="btn btn-secondary">Copy</button>
-                </div>
+                {analyzingIds.has(selectedMail.id) ? (
+                  <AttractiveLoader text="Drafting reply..." />
+                ) : (
+                  <>
+                    <div className="draft-area">
+                      {aiResults[selectedMail.id] ? 
+                        (aiResults[selectedMail.id].draft_reply || "AI unavailable — try again") : 
+                        "AI drafting is coming in the next iteration..."}
+                    </div>
+                    <div className="action-group">
+                      <button className="btn btn-primary" style={{ opacity: aiResults[selectedMail.id] ? 1 : 0.5, cursor: aiResults[selectedMail.id] ? 'pointer' : 'not-allowed' }}>Send reply</button>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ opacity: 1, cursor: 'pointer' }}
+                        onClick={() => analyzeEmail(selectedMail)}
+                      >
+                        Regenerate
+                      </button>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ opacity: aiResults[selectedMail.id] ? 1 : 0.5, cursor: aiResults[selectedMail.id] ? 'pointer' : 'not-allowed' }}
+                        onClick={() => {
+                          if (aiResults[selectedMail.id]?.draft_reply) {
+                            navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply);
+                          }
+                        }}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </>
