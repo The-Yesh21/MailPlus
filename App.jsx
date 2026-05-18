@@ -99,6 +99,21 @@ const StatCard = ({ label, val, trend, icon, className, index }) => {
   );
 };
 
+const getSenderColor = (name) => {
+  if (!name) return '#7B7BF5';
+  const colors = ['#F0A500', '#1AAB8A', '#7B7BF5', '#FF6B6B', '#A06BFF', '#00D1FF'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+};
+
+const decodeHtmlEntities = (text) => {
+  if (!text) return '';
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+};
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [mails, setMails] = useState([]);
@@ -114,6 +129,8 @@ const App = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [analyzingIds, setAnalyzingIds] = useState(new Set());
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [isFetchingStats, setIsFetchingStats] = useState(false);
 
   const API_BASE = "http://localhost:8000";
 
@@ -265,12 +282,6 @@ const App = () => {
     return mails;
   }, [mails, activeTab, aiResults]);
 
-  const handleScan = async () => {
-    setIsScanning(true);
-    await fetchEmails();
-    setIsScanning(false);
-  };
-
   const analyzeEmail = async (mail) => {
     const token = localStorage.getItem('mp_token');
     if (!token) return;
@@ -344,11 +355,35 @@ const App = () => {
     }
   };
 
-  const getSenderColor = (name) => {
-    const colors = ['#F0A500', '#1AAB8A', '#7B7BF5', '#FF6B6B', '#A06BFF', '#00D1FF'];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    return colors[Math.abs(hash) % colors.length];
+  const fetchDashboardStats = async () => {
+    const token = localStorage.getItem('mp_token');
+    if (!token) return;
+    setIsFetchingStats(true);
+    try {
+      const response = await fetch(`${API_BASE}/dashboard/stats`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setDashboardStats(data);
+    } catch (error) {
+      console.error("Failed to fetch dashboard stats:", error);
+    } finally {
+      setIsFetchingStats(false);
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('mp_token');
+    if (token && user) {
+      fetchEmails();
+      fetchDashboardStats();
+    }
+  }, [user]);
+
+  const handleScan = async () => {
+    setIsScanning(true);
+    await Promise.all([fetchEmails(), fetchDashboardStats()]);
+    setIsScanning(false);
   };
 
   const selectedMail = mails.find(m => m.id === selectedMailId);
@@ -631,6 +666,244 @@ const App = () => {
         }
         .badge-chip.amber { color: var(--amber); border-color: rgba(240,165,0,0.3); }
 
+        /* Mail List */
+        .mail-list {
+          width: 350px;
+          background: var(--bg);
+          border-right: 1px solid var(--border);
+          display: flex;
+          flex-direction: column;
+          flex-shrink: 0;
+        }
+
+        .list-topbar {
+          padding: 24px 16px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: var(--bg);
+          z-index: 10;
+        }
+
+        .list-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+
+        .scan-now {
+          background: var(--surface);
+          border: 1px solid var(--border-muted);
+          color: var(--text-primary);
+          padding: 6px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          transition: all 0.2s;
+        }
+        .scan-now:hover:not(:disabled) { border-color: var(--amber); background: rgba(240,165,0,0.05); }
+        .scan-now:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .analyzing-indicator {
+          background: rgba(240, 165, 0, 0.1);
+          border-bottom: 1px solid rgba(240, 165, 0, 0.2);
+          padding: 8px 16px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--amber);
+        }
+
+        .pulsing-dot {
+          width: 8px; height: 8px; background: var(--amber);
+          border-radius: 50%;
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+          0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(240, 165, 0, 0.7); }
+          70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(240, 165, 0, 0); }
+          100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(240, 165, 0, 0); }
+        }
+
+        .list-scroll { flex: 1; overflow-y: auto; }
+
+        .mail-row {
+          padding: 16px;
+          border-bottom: 1px solid var(--border);
+          cursor: pointer;
+          transition: background 0.2s;
+          display: flex;
+          gap: 12px;
+          position: relative;
+        }
+        .mail-row:hover { background: var(--surface); }
+        .mail-row.selected { background: rgba(240, 165, 0, 0.05); }
+        .mail-row.selected::before {
+          content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--amber);
+        }
+
+        .priority-dot {
+          width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+        }
+
+        .row-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+        .row-line1 { display: flex; justify-content: space-between; align-items: baseline; }
+        .row-sender { font-size: 14px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .row-time { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
+        .row-subject { 
+          font-size: 13px; font-weight: 500; color: var(--text-primary); 
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .row-snippet { 
+          font-size: 12px; color: var(--text-secondary);
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          line-height: 1.5;
+          word-break: break-word;
+        }
+
+        .badge-group { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+        .badge {
+          padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+        }
+        .badge-urgent { background: rgba(240, 165, 0, 0.15); color: var(--amber); }
+        .badge-new { background: rgba(26, 171, 138, 0.15); color: var(--teal); }
+        .badge-important { background: rgba(123, 123, 245, 0.15); color: #7B7BF5; }
+        .badge-promo { background: rgba(139, 148, 158, 0.1); color: var(--text-secondary); }
+
+        /* Detail Panel */
+        .detail-panel {
+          flex: 1;
+          background: var(--bg);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .detail-header {
+          padding: 24px 32px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          background: var(--bg);
+        }
+
+        .sender-box { display: flex; gap: 16px; align-items: flex-start; flex: 1; min-width: 0; }
+        .sender-avatar {
+          width: 48px; height: 48px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 20px; font-weight: 700; color: white; flex-shrink: 0;
+        }
+        .sender-meta { flex: 1; min-width: 0; }
+        .sender-meta h3 { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .sender-meta p { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+        .detail-subject { font-family: var(--font-serif); font-size: 28px; line-height: 1.2; color: var(--text-primary); }
+
+        .open-gmail {
+          color: var(--text-secondary); text-decoration: none; font-size: 12px; font-weight: 600;
+          padding: 8px 16px; border: 1px solid var(--border-muted); border-radius: 8px;
+          transition: all 0.2s; white-space: nowrap;
+        }
+        .open-gmail:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+
+        .detail-content { flex: 1; overflow-y: auto; padding: 32px; display: flex; flex-direction: column; gap: 24px; }
+
+        .card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 24px;
+        }
+        .card-label {
+          font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+          color: var(--text-secondary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+        }
+        .summary-text { font-size: 15px; line-height: 1.6; color: var(--text-primary); }
+        .deadline-chip {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: rgba(240, 165, 0, 0.1); color: var(--amber);
+          padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-top: 16px;
+        }
+
+        .history-item { font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
+        .label-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+        .pill {
+          font-size: 11px; font-weight: 600; color: var(--text-secondary);
+          background: var(--bg); padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+        }
+
+        .draft-text {
+          font-size: 14px; line-height: 1.6; color: var(--text-primary);
+          background: var(--bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-muted);
+          margin-bottom: 16px; white-space: pre-wrap;
+        }
+        .draft-placeholder { color: var(--text-secondary); font-style: italic; }
+
+        .btn-row { display: flex; gap: 12px; }
+        .btn-send {
+          background: var(--amber); color: var(--bg); border: none;
+          padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
+        }
+        .btn-sec {
+          background: transparent; color: var(--text-primary); border: 1px solid var(--border-muted);
+          padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+        }
+        .btn-sec:hover { background: var(--border-muted); }
+
+        /* Voice Bar */
+        .voice-bar {
+          background: var(--surface); border-top: 1px solid var(--border);
+          padding: 16px 32px; display: flex; align-items: center; gap: 24px;
+        }
+        .play-circle {
+          width: 40px; height: 40px; border-radius: 50%; background: var(--amber);
+          display: flex; align-items: center; justify-content: center; color: var(--bg);
+          font-size: 16px; cursor: pointer; flex-shrink: 0;
+        }
+        .briefing-meta { flex-shrink: 0; }
+        .briefing-title { font-size: 14px; font-weight: 700; display: block; }
+        .briefing-sub { font-size: 11px; color: var(--text-secondary); }
+
+        .waveform { flex: 1; display: flex; align-items: center; gap: 3px; height: 30px; }
+        .wave-bar { width: 3px; background: var(--border-muted); border-radius: 2px; transition: all 0.2s; }
+        .wave-bar.active { background: var(--amber); animation: wave 1s infinite alternate; }
+        @keyframes wave { from { height: 10px; } to { height: 24px; } }
+
+        .whatsapp-btn {
+          background: #25D366; color: white; border: none;
+          padding: 10px 20px; border-radius: 30px; font-size: 13px; font-weight: 700;
+          display: flex; align-items: center; gap: 8px; cursor: pointer;
+        }
+
+        /* Empty State */
+        .empty-state {
+          flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 40px; text-align: center; color: var(--text-secondary);
+        }
+        .empty-icon { font-size: 48px; margin-bottom: 16px; }
+        .empty-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+        .empty-subtitle { font-size: 14px; max-width: 240px; }
+
+        .spinner {
+          width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.1);
+          border-top-color: var(--amber); border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .skeleton-row { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+        .skel-line { height: 10px; background: var(--border-muted); border-radius: 4px; animation: pulse-skel 1.5s infinite; }
+        @keyframes pulse-skel { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.8; } }
+
+        .slide-in { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
         @media (prefers-reduced-motion: reduce) {
           * { animation: none !important; transition: none !important; }
         }
@@ -702,37 +975,25 @@ const App = () => {
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
               <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '4px' }}>Executive Summary</h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Your AI assistant has been quietly managing your communication ecosystem.</p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                {isFetchingStats ? "AI is analyzing your Gmail history..." : `Your AI assistant has analyzed ${dashboardStats?.total_emails.toLocaleString() || '0'} emails across your account.`}
+              </p>
             </div>
             <div className="badge-strip">
-              <div className="badge-chip amber">🔥 7 day inbox streak</div>
-              <div className="badge-chip">⚡ Zero missed deadlines</div>
-              <div className="badge-chip amber">🎯 AI Efficiency: 94</div>
+              <div className="badge-chip amber">🔥 {dashboardStats?.account_age_estimate || "Calculating..."} history</div>
+              <div className="badge-chip">⚡ {dashboardStats?.unread_emails || 0} unread</div>
+              <div className="badge-chip amber">🎯 Response Rate: {dashboardStats?.estimated_response_rate || 0}%</div>
             </div>
           </header>
 
           <div className="analytics-grid">
             {[
-              { label: 'Emails Summarized', val: '1,248', trend: '+18% this week', icon: '✨', class: 'amber' },
-              { label: 'Voice Briefings Sent', val: '326', trend: '91% listened', icon: '🎙️', class: 'teal' },
-              { label: 'Urgent Emails Caught', val: '87', trend: 'No missed deadlines', icon: '⚠️', class: 'red' },
-              { label: 'Hours Saved', val: '42.5', trend: 'Productivity gain', icon: '⏳', class: 'blue' }
+              { label: 'Emails Summarized', val: dashboardStats?.total_emails.toLocaleString() || '0', trend: `${dashboardStats?.emails_this_week || 0} this week`, icon: '✨', class: 'amber' },
+              { label: 'Voice Briefings Ready', val: ((dashboardStats?.emails_today || 0) + (dashboardStats?.unread_emails || 0)).toLocaleString(), trend: 'Daily Digest', icon: '🎙️', class: 'teal' },
+              { label: 'Urgent Emails Caught', val: dashboardStats?.estimated_urgent_emails.toLocaleString() || '0', trend: 'Priority detection', icon: '⚠️', class: 'red' },
+              { label: 'Hours Saved', val: ((dashboardStats?.total_emails * 18) / 3600).toFixed(1), trend: 'Efficiency gain', icon: '⏳', class: 'blue' }
             ].map((s, i) => (
-              <div key={i} className={`stat-card ${s.class}`}>
-                <div className="stat-header">
-                  <span className="stat-icon">{s.icon}</span>
-                  <span className={`stat-trend ${i === 0 ? 'trend-up' : 'trend-neutral'}`}>{s.trend}</span>
-                </div>
-                <div className="stat-value">{s.val}</div>
-                <div className="stat-label">{s.label}</div>
-                <svg className="sparkline" viewBox="0 0 100 30">
-                  <path 
-                    d={`M0,25 Q15,${20-i*2} 30,22 T60,${15+i} T100,${10+i*3}`} 
-                    fill="none" stroke="currentColor" strokeWidth="2"
-                    style={{ opacity: 0.3, color: i === 0 ? 'var(--amber)' : (i === 1 ? 'var(--teal)' : 'inherit') }}
-                  />
-                </svg>
-              </div>
+              <StatCard key={i} {...s} index={i} className={s.class} />
             ))}
           </div>
 
@@ -740,48 +1001,56 @@ const App = () => {
             <div className="panel">
               <h2 className="panel-title"><span>🕒</span> AI Activity Feed</h2>
               <div className="activity-list">
-                {[
-                  { t: 'Generated WhatsApp morning briefing', d: '2 mins ago', i: '🎙️' },
-                  { t: 'Detected urgent client deadline', d: '14 mins ago', i: '🚨' },
-                  { t: 'Drafted reply for Priya Nair', d: '1 hour ago', i: '✍️' },
-                  { t: 'Summarized 18 unread emails', d: '3 hours ago', i: '📊' },
-                  { t: 'Clustered 6 related conversations', d: 'Yesterday', i: '🧠' }
-                ].map((a, i) => (
-                  <div key={i} className="activity-item">
-                    <div className="activity-icon">{a.i}</div>
-                    <div className="activity-content">
-                      <div className="activity-text">{a.t}</div>
-                      <div className="activity-time">{a.d}</div>
+                {isFetchingStats ? (
+                  [...Array(5)].map((_, i) => (
+                    <div key={i} className="skeleton-row" style={{ padding: '12px', marginBottom: '8px' }}>
+                      <div className="skel-line" style={{ width: '80%' }}></div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  (dashboardStats?.recent_activity_feed || []).map((a, i) => (
+                    <div key={i} className="activity-item">
+                      <div className="activity-icon">{a.icon}</div>
+                      <div className="activity-content">
+                        <div className="activity-text">{a.text}</div>
+                        <div className="activity-time">{a.time}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+                {!isFetchingStats && (!dashboardStats?.recent_activity_feed || dashboardStats.recent_activity_feed.length === 0) && (
+                  <div className="empty-subtitle">No recent activity detected.</div>
+                )}
               </div>
             </div>
 
             <div className="panel">
               <h2 className="panel-title"><span>💡</span> AI Productivity Insights</h2>
               <div className="insight-row">
-                <div className="insight-card">You reply 34% faster in the morning session.</div>
-                <div className="insight-card">Client emails are your highest priority category this month.</div>
-                <div className="insight-card">Most urgent emails arrive between 8am–10am.</div>
-                <div className="insight-card">You ignored 12 low-priority promotional emails this week.</div>
+                {dashboardStats?.unread_emails > 50 && <div className="insight-card">Your inbox is accumulating unread messages rapidly.</div>}
+                {((dashboardStats?.promotional_emails || 0) / (dashboardStats?.total_emails || 1)) > 0.4 && <div className="insight-card">Most incoming traffic is promotional noise.</div>}
+                {(dashboardStats?.morning_emails || 0) > (dashboardStats?.afternoon_emails || 0) && <div className="insight-card">You receive most communication during morning hours.</div>}
+                {(dashboardStats?.estimated_response_rate || 0) > 20 && <div className="insight-card">You maintain a healthy email response pattern.</div>}
+                {dashboardStats?.oldest_email_timestamp && (
+                  <div className="insight-card">Deepest visible history: {new Date(dashboardStats.oldest_email_timestamp * 1000).toLocaleDateString()}.</div>
+                )}
               </div>
               
               <div className="progress-grid">
                 {[
-                  { label: 'Efficiency', val: 88 },
-                  { label: 'Inbox Zero', val: 92 },
-                  { label: 'Deadlines', val: 100 }
+                  { label: 'Efficiency', val: Math.min(100, Math.floor((dashboardStats?.total_emails || 0) / 100)) },
+                  { label: 'Inbox Zero', val: Math.max(0, 100 - Math.floor(((dashboardStats?.unread_emails || 0) / (dashboardStats?.total_emails || 1)) * 100)) },
+                  { label: 'Deadlines', val: 100 - (dashboardStats?.estimated_deadline_emails || 0) }
                 ].map((p, i) => (
                   <div key={i} className="progress-item">
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifySelf: 'center' }}>
                       <svg className="progress-svg">
                         <circle className="progress-bg" cx="25" cy="25" r="20" />
                         <circle className="progress-fill" cx="25" cy="25" r="20" 
-                          style={{ strokeDasharray: 126, strokeDashoffset: 126 - (126 * p.val) / 100 }} 
+                          style={{ strokeDasharray: 126, strokeDashoffset: 126 - (126 * Math.max(0, Math.min(100, p.val))) / 100 }} 
                         />
                       </svg>
-                      <span className="progress-val" style={{ position: 'absolute', width: '100%', textAlign: 'center' }}>{p.val}%</span>
+                      <span className="progress-val" style={{ position: 'absolute', width: '100%', textAlign: 'center' }}>{Math.max(0, Math.min(100, p.val))}%</span>
                     </div>
                     <span className="progress-label">{p.label}</span>
                   </div>
@@ -795,21 +1064,29 @@ const App = () => {
             <div className="heatmap-container">
               <div className="heatmap-grid">
                 <div className="heatmap-day-labels">
-                  {['Mon', '', 'Wed', '', 'Fri', '', ''].map((d, i) => (
+                  {['Sun', '', 'Tue', '', 'Thu', '', 'Sat'].map((d, i) => (
                     <div key={i} className="heatmap-day-label" style={{ height: '12px', marginBottom: '4px' }}>{d}</div>
                   ))}
                 </div>
-                {[...Array(24)].map((_, i) => (
-                  <div key={i} className="heatmap-col">
-                    {[...Array(7)].map((_, j) => (
-                      <div key={j} className="heatmap-cell" data-level={Math.floor(Math.random() * 5)}></div>
-                    ))}
-                  </div>
-                ))}
+                {[...Array(24)].map((_, i) => {
+                  const dayOffset = (23 - i) * 7;
+                  return (
+                    <div key={i} className="heatmap-col">
+                      {[...Array(7)].map((_, j) => {
+                        const date = new Date();
+                        date.setDate(date.getDate() - (dayOffset + (6 - j)));
+                        const dateStr = date.toISOString().split('T')[0];
+                        const entry = dashboardStats?.activity_heatmap?.find(h => h.date === dateStr);
+                        const level = entry ? Math.min(Math.floor(entry.count / 3) + 1, 4) : 0;
+                        return <div key={j} className="heatmap-cell" data-level={level} title={`${dateStr}: ${entry?.count || 0} emails`}></div>
+                      })}
+                    </div>
+                  );
+                })}
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '4px', marginTop: '12px', alignItems: 'center' }}>
                 <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Less</span>
-                {[0,1,2,3,4].map(l => <div key={l} className="heatmap-cell" data-level={l}></div>)}
+                {[0,1,2,3,4].map(l => <div key={l} className="heatmap-cell" data-level={l}></div>)/* Heatmap cells */}
                 <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>More</span>
               </div>
             </div>
@@ -818,23 +1095,23 @@ const App = () => {
           <div className="panel">
             <h2 className="panel-title"><span>🎙️</span> Recent Voice Briefings</h2>
             <div className="history-table">
-              {[
-                { d: 'Monday', t: '47s', e: 12, s: 'Sent' },
-                { d: 'Tuesday', t: '1m 12s', e: 21, s: 'Sent' },
-                { d: 'Wednesday', t: '39s', e: 8, s: 'Pending' }
-              ].map((h, i) => (
-                <div key={i} className="history-row">
-                  <span style={{ fontWeight: '600' }}>{h.d}</span>
-                  <span style={{ color: 'var(--text-secondary)' }}>{h.t}</span>
-                  <span>{h.e} emails</span>
-                  <div className="history-waveform">
-                    {[...Array(8)].map((_, k) => (
-                      <div key={k} className="hw-bar" style={{ height: `${4 + Math.random() * 8}px` }}></div>
-                    ))}
+              {dashboardStats?.top_senders ? (
+                dashboardStats.top_senders.map((s, i) => (
+                  <div key={i} className="history-row" style={{ gridTemplateColumns: '2fr 2.5fr 1fr' }}>
+                    <span style={{ fontWeight: '600' }}>{s.name}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{s.email}</span>
+                    <span style={{ textAlign: 'right', fontWeight: '700', color: 'var(--amber)' }}>{s.count} mails</span>
                   </div>
-                  <span style={{ color: h.s === 'Sent' ? 'var(--teal)' : 'var(--amber)', fontWeight: '700', fontSize: '10px' }}>{h.s}</span>
-                </div>
-              ))}
+                ))
+              ) : (
+                [...Array(3)].map((h, i) => (
+                  <div key={i} className="history-row">
+                    <span style={{ fontWeight: '600' }}>...</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>...</span>
+                    <span>...</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -842,213 +1119,213 @@ const App = () => {
         <>
           {/* Mail List */}
           <main className="mail-list">
-        <header className="list-topbar">
-          <h1 className="list-title">{activeTab}</h1>
-          <button className="scan-now" onClick={handleScan} disabled={isScanning}>
-            {isScanning ? <div className="spinner"></div> : <span>↻</span>}
-            {isScanning ? "Scanning..." : "Scan now"}
-          </button>
-        </header>
-
-        {isAnalyzing && (
-          <div className="analyzing-indicator">
-            <div className="pulsing-dot"></div>
-            <span>AI Analyzing your inbox...</span>
-          </div>
-        )}
-
-        <div className="list-scroll">
-          {isLoading ? (
-            [...Array(6)].map((_, i) => (
-              <div key={i} className="skeleton-row">
-                <div className="skel-line" style={{ width: '60%' }}></div>
-                <div className="skel-line" style={{ width: '85%' }}></div>
-                <div className="skel-line" style={{ width: '45%' }}></div>
-              </div>
-            ))
-          ) : filteredMails.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">✅</div>
-              <div className="empty-title">All caught up!</div>
-              <div className="empty-subtitle">Your inbox is clean for this view.</div>
-            </div>
-          ) : (
-            filteredMails.map(mail => (
-              <div 
-                key={mail.id} 
-                className={`mail-row ${selectedMailId === mail.id ? 'selected' : ''}`}
-                onClick={() => setSelectedMailId(mail.id)}
-              >
-                <div 
-                  className="priority-dot" 
-                  style={{ background: aiResults[mail.id]?.priority === 'urgent' ? 'var(--amber)' : (!mail.is_read ? 'var(--teal)' : 'var(--border-muted)') }}
-                ></div>
-                <div className="row-content">
-                  <div className="row-line1">
-                    <span className="row-sender">{mail.from_name}</span>
-                    <span className="row-time">{new Date(mail.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  </div>
-                  <div className="row-subject">{mail.subject}</div>
-                  <div className="row-snippet">{mail.snippet}</div>
-                  
-                  <div className="badge-group">
-                    {aiResults[mail.id]?.priority === 'urgent' && <span className="badge badge-urgent">Urgent</span>}
-                    {!mail.is_read && <span className="badge badge-new">New</span>}
-                    {mail.labels?.includes('IMPORTANT') && <span className="badge badge-important">Important</span>}
-                    {mail.labels?.includes('CATEGORY_PROMOTIONS') && <span className="badge badge-promo">Promo</span>}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </main>
-
-      {/* Detail Panel */}
-      <section className="detail-panel">
-        {selectedMail ? (
-          <div key={selectedMail.id} className="slide-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <header className="detail-header">
-              <div className="sender-box">
-                <div className="sender-avatar" style={{ background: getSenderColor(selectedMail.from_name) }}>
-                  {selectedMail.from_name[0]}
-                </div>
-                <div className="sender-meta">
-                  <h3>{selectedMail.from_name}</h3>
-                  <p>{selectedMail.from_email}</p>
-                  <h1 className="detail-subject">{selectedMail.subject}</h1>
-                </div>
-              </div>
-              <a 
-                href={`https://mail.google.com/mail/u/0/#inbox/${selectedMail.id}`} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="open-gmail"
-              >
-                Open in Gmail
-              </a>
+            <header className="list-topbar">
+              <h1 className="list-title">{activeTab}</h1>
+              <button className="scan-now" onClick={handleScan} disabled={isScanning}>
+                {isScanning ? <div className="spinner"></div> : <span>↻</span>}
+                {isScanning ? "Scanning..." : "Scan now"}
+              </button>
             </header>
 
-            <div className="detail-content">
-              {/* AI Context Card */}
-              <div className="card">
-                <div className="card-label">
-                  <span>✨</span> AI Context Summary
-                </div>
-                {analyzingIds.has(selectedMail.id) ? (
-                  <div className="empty-state" style={{ height: '100px' }}>
-                    <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
-                    <div className="empty-subtitle">Analyzing context...</div>
+            {isAnalyzing && (
+              <div className="analyzing-indicator">
+                <div className="pulsing-dot"></div>
+                <span>AI Analyzing your inbox...</span>
+              </div>
+            )}
+
+            <div className="list-scroll">
+              {isLoading ? (
+                [...Array(6)].map((_, i) => (
+                  <div key={i} className="skeleton-row">
+                    <div className="skel-line" style={{ width: '60%' }}></div>
+                    <div className="skel-line" style={{ width: '85%' }}></div>
+                    <div className="skel-line" style={{ width: '45%' }}></div>
                   </div>
-                ) : aiResults[selectedMail.id] ? (
-                  <>
-                    <p className="summary-text">{aiResults[selectedMail.id].summary}</p>
-                    {aiResults[selectedMail.id].deadline && (
-                      <div className="deadline-chip">
-                        🕒 Deadline: {aiResults[selectedMail.id].deadline}
+                ))
+              ) : filteredMails.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon">✅</div>
+                  <div className="empty-title">All caught up!</div>
+                  <div className="empty-subtitle">Your inbox is clean for this view.</div>
+                </div>
+              ) : (
+                filteredMails.map(mail => (
+                  <div 
+                    key={mail.id} 
+                    className={`mail-row ${selectedMailId === mail.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedMailId(mail.id)}
+                  >
+                    <div 
+                      className="priority-dot" 
+                      style={{ background: aiResults[mail.id]?.priority === 'urgent' ? 'var(--amber)' : (!mail.is_read ? 'var(--teal)' : 'var(--border-muted)') }}
+                    ></div>
+                    <div className="row-content">
+                      <div className="row-line1">
+                        <span className="row-sender">{decodeHtmlEntities(mail.from_name)}</span>
+                        <span className="row-time">{new Date(mail.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <div className="row-subject">{decodeHtmlEntities(mail.subject)}</div>
+                      <div className="row-snippet">{decodeHtmlEntities(mail.snippet)}</div>
+                      
+                      <div className="badge-group">
+                        {aiResults[mail.id]?.priority === 'urgent' && <span className="badge badge-urgent">Urgent</span>}
+                        {!mail.is_read && <span className="badge badge-new">New</span>}
+                        {mail.labels?.includes('IMPORTANT') && <span className="badge badge-important">Important</span>}
+                        {mail.labels?.includes('CATEGORY_PROMOTIONS') && <span className="badge badge-promo">Promo</span>}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </main>
+
+          {/* Detail Panel */}
+          <section className="detail-panel">
+            {selectedMail ? (
+              <div key={selectedMail.id} className="slide-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <header className="detail-header">
+                  <div className="sender-box">
+                    <div className="sender-avatar" style={{ background: getSenderColor(selectedMail.from_name) }}>
+                      {selectedMail.from_name ? selectedMail.from_name[0] : '?'}
+                    </div>
+                    <div className="sender-meta">
+                      <h3>{decodeHtmlEntities(selectedMail.from_name)}</h3>
+                      <p>{selectedMail.from_email}</p>
+                      <h1 className="detail-subject">{decodeHtmlEntities(selectedMail.subject)}</h1>
+                    </div>
+                  </div>
+                  <a 
+                    href={`https://mail.google.com/mail/u/0/#inbox/${selectedMail.id}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="open-gmail"
+                  >
+                    Open in Gmail
+                  </a>
+                </header>
+
+                <div className="detail-content">
+                  {/* AI Context Card */}
+                  <div className="card">
+                    <div className="card-label">
+                      <span>✨</span> AI Context Summary
+                    </div>
+                    {analyzingIds.has(selectedMail.id) ? (
+                      <div className="empty-state" style={{ height: '100px' }}>
+                        <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
+                        <div className="empty-subtitle">Analyzing context...</div>
+                      </div>
+                    ) : aiResults[selectedMail.id] ? (
+                      <>
+                        <p className="summary-text">{aiResults[selectedMail.id].summary}</p>
+                        {aiResults[selectedMail.id].deadline && (
+                          <div className="deadline-chip">
+                            🕒 Deadline: {aiResults[selectedMail.id].deadline}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{ textAlign: 'center', padding: '12px' }}>
+                        <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
+                        <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
+                          Analyze with Groq AI
+                        </button>
                       </div>
                     )}
-                  </>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '12px' }}>
-                    <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
-                    <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
-                      Analyze with Groq AI
-                    </button>
                   </div>
-                )}
-              </div>
 
-              {/* Thread History Card */}
-              <div className="card">
-                <div className="card-label">
-                  <span>🕒</span> Thread History
-                </div>
-                <div className="history-item">
-                  Received on {new Date(selectedMail.date).toLocaleDateString()} at {new Date(selectedMail.date).toLocaleTimeString()}
-                </div>
-                <div className="label-pills">
-                  {selectedMail.labels?.map(l => (
-                    <span key={l} className="pill">{l.replace('CATEGORY_', '').toLowerCase()}</span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Email Content Card */}
-              <div className="card">
-                <div className="card-label">
-                  <span>✉️</span> Email Content
-                </div>
-                {fullBodies[selectedMail.id] ? (
-                  <EmailPreview html={fullBodies[selectedMail.id]} />
-                ) : (
-                  <div>
-                    <p className="summary-text" style={{ opacity: 0.7, marginBottom: '16px' }}>{selectedMail.snippet}...</p>
-                    <button className="btn-sec" onClick={() => fetchFullEmail(selectedMail.id)}>
-                      {isFetchingBody ? <div className="spinner"></div> : "View Full Email"}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* AI Draft Card */}
-              <div className="card">
-                <div className="card-label">
-                  <span>✍️</span> AI Draft Reply
-                </div>
-                {aiResults[selectedMail.id]?.draft_reply ? (
-                  <>
-                    <div className="draft-text">{aiResults[selectedMail.id].draft_reply}</div>
-                    <div className="btn-row">
-                      <button className="btn-send">Send reply</button>
-                      <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
-                      <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply)}>Copy</button>
+                  {/* Thread History Card */}
+                  <div className="card">
+                    <div className="card-label">
+                      <span>🕒</span> Thread History
                     </div>
-                  </>
-                ) : (
-                  <div className="draft-text draft-placeholder">
-                    {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
+                    <div className="history-item">
+                      Received on {new Date(selectedMail.date).toLocaleDateString()} at {new Date(selectedMail.date).toLocaleTimeString()}
+                    </div>
+                    <div className="label-pills">
+                      {selectedMail.labels?.map(l => (
+                        <span key={l} className="pill">{l.replace('CATEGORY_', '').toLowerCase()}</span>
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
 
-            {/* Voice Briefing Bar */}
-            <div className="voice-bar">
-              <div className="play-circle" onClick={() => setIsPlayingBriefing(!isPlayingBriefing)}>
-                {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
+                  {/* Email Content Card */}
+                  <div className="card">
+                    <div className="card-label">
+                      <span>✉️</span> Email Content
+                    </div>
+                    {fullBodies[selectedMail.id] ? (
+                      <EmailPreview html={fullBodies[selectedMail.id]} />
+                    ) : (
+                      <div>
+                        <p className="summary-text" style={{ opacity: 0.7, marginBottom: '16px' }}>{decodeHtmlEntities(selectedMail.snippet)}...</p>
+                        <button className="btn-sec" onClick={() => fetchFullEmail(selectedMail.id)}>
+                          {isFetchingBody ? <div className="spinner"></div> : "View Full Email"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI Draft Card */}
+                  <div className="card">
+                    <div className="card-label">
+                      <span>✍️</span> AI Draft Reply
+                    </div>
+                    {aiResults[selectedMail.id]?.draft_reply ? (
+                      <>
+                        <div className="draft-text">{aiResults[selectedMail.id].draft_reply}</div>
+                        <div className="btn-row">
+                          <button className="btn-send">Send reply</button>
+                          <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
+                          <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply)}>Copy</button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="draft-text draft-placeholder">
+                        {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Voice Briefing Bar */}
+                <div className="voice-bar">
+                  <div className="play-circle" onClick={() => setIsPlayingBriefing(!isPlayingBriefing)}>
+                    {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
+                  </div>
+                  <div className="briefing-meta">
+                    <span className="briefing-title">Morning briefing ready</span>
+                    <span className="briefing-sub">47s · Tap to play</span>
+                  </div>
+                  <div className="waveform">
+                    {[...Array(24)].map((_, i) => (
+                      <div 
+                        key={i} 
+                        className={`wave-bar ${isPlayingBriefing ? 'active' : ''}`} 
+                        style={{ 
+                          height: isPlayingBriefing ? '' : `${[8,14,10,18,12,20,10,16,8,22,12,18,8,20,14,24,10,18,8,12,6,16,10,14][i]}px`,
+                          animationDelay: `${i * 0.05}s` 
+                        }}
+                      ></div>
+                    ))}
+                  </div>
+                  <button className="whatsapp-btn">
+                    <span>✉</span> Send to WhatsApp
+                  </button>
+                </div>
               </div>
-              <div className="briefing-meta">
-                <span className="briefing-title">Morning briefing ready</span>
-                <span className="briefing-sub">47s · Tap to play</span>
+            ) : (
+              <div className="empty-state" style={{ height: '100%' }}>
+                <div className="empty-icon">📨</div>
+                <div className="empty-title">Select an email to read</div>
+                <div className="empty-subtitle">Pick something from the list to see AI insights.</div>
               </div>
-              <div className="waveform">
-                {[...Array(24)].map((_, i) => (
-                  <div 
-                    key={i} 
-                    className={`wave-bar ${isPlayingBriefing ? 'active' : ''}`} 
-                    style={{ 
-                      height: isPlayingBriefing ? '' : `${[8,14,10,18,12,20,10,16,8,22,12,18,8,20,14,24,10,18,8,12,6,16,10,14][i]}px`,
-                      animationDelay: `${i * 0.05}s` 
-                    }}
-                  ></div>
-                ))}
-              </div>
-              <button className="whatsapp-btn">
-                <span>✉</span> Send to WhatsApp
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state" style={{ height: '100%' }}>
-            <div className="empty-icon">📨</div>
-            <div className="empty-title">Select an email to read</div>
-            <div className="empty-subtitle">Pick something from the list to see AI insights.</div>
-          </div>
-        )}
-      </section>
-      </>
-    )}
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 };
