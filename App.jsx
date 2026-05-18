@@ -161,6 +161,12 @@ const App = () => {
     unread_emails: 0,
     estimated_urgent_emails: 0
   });
+  const [statsData, setStatsData] = useState({
+    emails_analyzed: 0,
+    urgent_emails_caught: 0,
+    replies_drafted: 0,
+    voice_briefings_sent: 0
+  });
   const [isFetchingStats, setIsFetchingStats] = useState(false);
   const [globalError, setGlobalError] = useState(null);
 
@@ -331,7 +337,8 @@ const App = () => {
     if (!mail) return;
     const token = localStorage.getItem('mp_token');
     if (!token) return;
-    setAnalyzingIds(prev => new Set(prev).add(mail.id));
+    const emailId = mail.id;
+    setAnalyzingIds(prev => new Set(prev).add(emailId));
     try {
       const response = await fetch(`${API_BASE}/ai/analyze`, {
         method: 'POST',
@@ -340,7 +347,7 @@ const App = () => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          email_id: mail.id,
+          email_id: emailId,
           subject: mail.subject,
           from_name: mail.from_name,
           body_preview: mail.body_preview,
@@ -349,14 +356,28 @@ const App = () => {
       });
       if (!response.ok) throw new Error("AI analysis failed");
       const data = await response.json();
-      setAiResults(prev => ({ ...prev, [mail.id]: data }));
+      console.log("Single AI analysis result:", data);
+      
+      setAiResults(prev => ({ ...prev, [emailId]: data }));
+
+      // Update stats locally
+      const isUrgent = data.priority === 'urgent';
+      const hasReply = data.draft_reply && !data.draft_reply.includes('unavailable');
+
+      setStatsData(prev => ({
+        emails_analyzed: prev.emails_analyzed + 1,
+        urgent_emails_caught: prev.urgent_emails_caught + (isUrgent ? 1 : 0),
+        replies_drafted: prev.replies_drafted + (hasReply ? 1 : 0),
+        voice_briefings_sent: prev.voice_briefings_sent
+      }));
+
       return data;
     } catch (error) {
       console.error("Failed to analyze email:", error);
     } finally {
       setAnalyzingIds(prev => {
         const next = new Set(prev);
-        next.delete(mail.id);
+        next.delete(emailId);
         return next;
       });
     }
@@ -370,7 +391,7 @@ const App = () => {
     if (toAnalyze.length === 0) return;
     setIsAnalyzing(true);
     try {
-      const response = await fetch(`${API_BASE}/ai/analyze-batch`, {
+      const batchResp = await fetch(`${API_BASE}/ai/analyze-batch`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -378,10 +399,29 @@ const App = () => {
         },
         body: JSON.stringify({ emails: toAnalyze })
       });
-      if (!response.ok) throw new Error("Batch analysis failed");
-      const data = await response.json();
-      if (data && data.results) {
-        setAiResults(prev => ({ ...prev, ...data.results }));
+      if (!batchResp.ok) throw new Error("Batch analysis failed");
+      const batchData = await batchResp.json();
+      console.log("Raw batch response:", batchData);
+      console.log("Results keys:", Object.keys(batchData.results || {}));
+
+      if (batchData && batchData.results) {
+        setAiResults(prev => {
+          const merged = { ...prev, ...batchData.results };
+          console.log("Merged aiResults:", merged);
+          return merged;
+        });
+
+        // Update stats locally
+        const results = Object.values(batchData.results || {});
+        const urgentCount = results.filter(r => r.priority === 'urgent').length;
+        const repliesCount = results.filter(r => r.draft_reply && !r.draft_reply.includes('unavailable')).length;
+
+        setStatsData(prev => ({
+          emails_analyzed: prev.emails_analyzed + results.length,
+          urgent_emails_caught: prev.urgent_emails_caught + urgentCount,
+          replies_drafted: prev.replies_drafted + repliesCount,
+          voice_briefings_sent: prev.voice_briefings_sent
+        }));
       }
     } catch (error) {
       console.error("Failed to analyze batch:", error);
@@ -420,7 +460,15 @@ const App = () => {
       });
       if (!response.ok) throw new Error("Fetch stats failed");
       const data = await response.json();
-      if (data) setDashboardStats(data);
+      if (data) {
+        setDashboardStats(data);
+        setStatsData({
+          emails_analyzed: data.emails_analyzed || 0,
+          urgent_emails_caught: data.urgent_emails_caught || 0,
+          replies_drafted: data.replies_drafted || 0,
+          voice_briefings_sent: data.voice_briefings_sent || 0
+        });
+      }
     } catch (error) {
       console.error("Failed to fetch dashboard stats:", error);
       // Keep existing or default stats on failure
@@ -1282,29 +1330,42 @@ const App = () => {
                       <div className="card-label">
                         <span>✨</span> AI Context Summary
                       </div>
-                      {analyzingIds.has(selectedMail.id) ? (
-                        <div className="empty-state" style={{ height: '100px' }}>
-                          <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
-                          <div className="empty-subtitle">Analyzing context...</div>
-                        </div>
-                      ) : aiResults[selectedMail.id] ? (
-                      <>
-                        <p className="summary-text">{aiResults[selectedMail.id].summary}</p>
-                        {aiResults[selectedMail.id].deadline && (
-                          <div className="deadline-chip">
-                            🕒 Deadline: {aiResults[selectedMail.id].deadline}
+                      {(() => {
+                        const emailId = selectedMail?.id;
+                        const aiData = emailId ? aiResults[emailId] : null;
+                        
+                        if (analyzingIds.has(emailId)) {
+                          return (
+                            <div className="empty-state" style={{ height: '100px' }}>
+                              <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
+                              <div className="empty-subtitle">Analyzing context...</div>
+                            </div>
+                          );
+                        }
+                        
+                        if (aiData) {
+                          return (
+                            <>
+                              <p className="summary-text">{aiData.summary}</p>
+                              {aiData.deadline && (
+                                <div className="deadline-chip">
+                                  🕒 Deadline: {aiData.deadline}
+                                </div>
+                              )}
+                            </>
+                          );
+                        }
+
+                        return (
+                          <div style={{ textAlign: 'center', padding: '12px' }}>
+                            <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
+                            <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
+                              ✨ Analyze this email
+                            </button>
                           </div>
-                        )}
-                      </>
-                    ) : (
-                      <div style={{ textAlign: 'center', padding: '12px' }}>
-                        <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
-                        <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
-                          Analyze with Groq AI
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                        );
+                      })()}
+                    </div>
 
                   {/* Thread History Card */}
                   <div className="card">

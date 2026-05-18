@@ -49,6 +49,13 @@ SCOPES = [
 # Caching for dashboard stats
 dashboard_cache = {}
 
+stats_counter = {
+  "emails_analyzed": 0,
+  "urgent_emails_caught": 0, 
+  "replies_drafted": 0,
+  "voice_briefings_sent": 0
+}
+
 def call_groq(prompt: str, system: str, max_tokens: int = 300) -> str:
     max_retries = 3
     for attempt in range(max_retries):
@@ -177,10 +184,7 @@ def health():
 @app.get("/dashboard/stats")
 def get_dashboard_stats(user=Depends(get_current_user)):
     return {
-        "emails_analyzed": 0,
-        "voice_briefings_sent": 0,
-        "urgent_emails_caught": 0,
-        "replies_drafted": 0,
+        **stats_counter,
         "last_scan": "Just now",
         "member_since": "May 2026"
     }
@@ -477,6 +481,12 @@ Preview: {body_preview}"""
                 "summary": data.get("summary", body_preview[:200]),
                 "draft_reply": data.get("draft_reply", "Could not generate draft.")
             }
+
+            if results[email_id]["priority"] == "urgent":
+                stats_counter["urgent_emails_caught"] += 1
+            if results[email_id]["draft_reply"] and "unavailable" not in results[email_id]["draft_reply"]:
+                stats_counter["replies_drafted"] += 1
+            stats_counter["emails_analyzed"] += 1
 
             await asyncio.sleep(2)
 
