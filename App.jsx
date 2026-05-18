@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Landing from './src/Landing';
 
 const EmailPreview = ({ html }) => {
@@ -7,7 +7,6 @@ const EmailPreview = ({ html }) => {
   useEffect(() => {
     if (!iframeRef.current || !html) return;
 
-    // Check if html contains any tags, if not wrap in p tags
     const hasHtmlTags = /<[a-z][\s\S]*>/i.test(html);
     const content = hasHtmlTags ? html : `<p>${html.replace(/\n/g, '<br/>')}</p>`;
 
@@ -18,17 +17,20 @@ const EmailPreview = ({ html }) => {
       <meta charset="utf-8">
       <style>
         body { 
-          font-family: -apple-system, sans-serif; 
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
           font-size: 14px; 
           line-height: 1.6; 
-          color: #E6EDF3; 
+          color: #C9D1D9; 
           background: transparent; 
-          margin: 16px;
+          margin: 0;
           word-wrap: break-word;
         }
         img { max-width: 100%; height: auto; }
         a { color: #F0A500; }
         * { max-width: 100%; box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #30363D; border-radius: 2px; }
       </style>
       </head>
       <body>
@@ -43,7 +45,7 @@ const EmailPreview = ({ html }) => {
   const handleLoad = (e) => {
     const iframe = e.target;
     if (iframe.contentDocument && iframe.contentDocument.body) {
-      iframe.style.height = iframe.contentDocument.body.scrollHeight + 'px';
+      iframe.style.height = Math.min(iframe.contentDocument.body.scrollHeight, 400) + 'px';
     }
   };
 
@@ -51,10 +53,49 @@ const EmailPreview = ({ html }) => {
     <iframe
       ref={iframeRef}
       sandbox="allow-same-origin"
-      style={{ width: '100%', border: 'none', minHeight: '200px', display: 'block' }}
+      style={{ width: '100%', border: 'none', minHeight: '100px', display: 'block' }}
       onLoad={handleLoad}
       title="Email Preview"
     />
+  );
+};
+
+const useCounter = (end, duration = 1000, start = 0) => {
+  const [count, setCount] = useState(start);
+  useEffect(() => {
+    let startTime = null;
+    const animate = (timestamp) => {
+      if (!startTime) startTime = timestamp;
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      setCount(Math.floor(progress * (end - start) + start));
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    requestAnimationFrame(animate);
+  }, [end, duration, start]);
+  return count;
+};
+
+const StatCard = ({ label, val, trend, icon, className, index }) => {
+  const numVal = parseInt(val.replace(/,/g, ''));
+  const animatedVal = useCounter(numVal, 1500 + index * 200);
+  const displayVal = val.includes('.') ? animatedVal.toFixed(1) : animatedVal.toLocaleString();
+
+  return (
+    <div className={`stat-card ${className}`}>
+      <div className="stat-header">
+        <span className="stat-icon">{icon}</span>
+        <span className={`stat-trend ${index === 0 ? 'trend-up' : 'trend-neutral'}`}>{trend}</span>
+      </div>
+      <div className="stat-value">{displayVal}{val.includes('hrs') ? ' hrs' : ''}</div>
+      <div className="stat-label">{label}</div>
+      <svg className="sparkline" viewBox="0 0 100 30">
+        <path 
+          d={`M0,25 Q15,${20-index*2} 30,22 T60,${15+index} T100,${10+index*3}`} 
+          fill="none" stroke="currentColor" strokeWidth="2"
+          style={{ opacity: 0.3, color: index === 0 ? 'var(--amber)' : (index === 1 ? 'var(--teal)' : 'inherit') }}
+        />
+      </svg>
+    </div>
   );
 };
 
@@ -67,7 +108,7 @@ const App = () => {
   const [isPlayingBriefing, setIsPlayingBriefing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [activeTab, setActiveTab] = useState('All Mail');
-  const [fullBodies, setFullBodies] = useState({}); // Store full email bodies by id
+  const [fullBodies, setFullBodies] = useState({});
   const [isFetchingBody, setIsFetchingBody] = useState(false);
   const [aiResults, setAiResults] = useState({});
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -76,13 +117,6 @@ const App = () => {
 
   const API_BASE = "http://localhost:8000";
 
-  const AttractiveLoader = ({ text = "Processing" }) => (
-    <div className="attractive-loader">
-      <div className="pulse-ring" />
-      <span className="shimmer-text">{text}</span>
-    </div>
-  );
-
   // Auth & Token Management
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -90,7 +124,7 @@ const App = () => {
 
     if (token) {
       localStorage.setItem('mp_token', token);
-      setIsTransitioning(true); // Start transition when token detected
+      setIsTransitioning(true);
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
     }
@@ -105,7 +139,6 @@ const App = () => {
           picture: payload.picture
         });
 
-        // Load cached mails
         const cachedMails = localStorage.getItem(`mp_mails_${payload.email}`);
         if (cachedMails) {
           const parsed = JSON.parse(cachedMails);
@@ -121,7 +154,6 @@ const App = () => {
     setAuthChecked(true);
   }, []);
 
-  // Fetch Emails on Load or Token Change
   useEffect(() => {
     const token = localStorage.getItem('mp_token');
     if (token && user) {
@@ -133,7 +165,6 @@ const App = () => {
     const token = localStorage.getItem('mp_token');
     if (!token || !user) return;
 
-    // Determine 'after' timestamp if we have mails
     let afterParam = "";
     if (mails.length > 0) {
       const maxDate = Math.max(...mails.map(m => m.internal_date || 0));
@@ -147,9 +178,7 @@ const App = () => {
     try {
       const startTime = Date.now();
       const response = await fetch(`${API_BASE}/emails${afterParam}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (response.status === 401) {
@@ -165,29 +194,19 @@ const App = () => {
       
       if (newMails.length > 0) {
         setMails(prevMails => {
-          // Merge and avoid duplicates by ID
           const existingIds = new Set(prevMails.map(m => m.id));
           const filteredNew = newMails.filter(m => !existingIds.has(m.id));
           const combined = [...filteredNew, ...prevMails];
-          
-          // Sort by date newest first
           combined.sort((a, b) => (b.internal_date || 0) - (a.internal_date || 0));
-          
-          // Persist to localStorage
           localStorage.setItem(`mp_mails_${user.email}`, JSON.stringify(combined));
-          
           if (!selectedMailId && combined.length > 0) {
             setSelectedMailId(combined[0].id);
           }
-          
-          // Trigger AI analysis for the first 10 emails
           analyzeBatch(combined.slice(0, 10));
-
           return combined;
         });
       }
 
-      // Ensure minimum 1.2s transition
       const elapsed = Date.now() - startTime;
       if (elapsed < 1200) {
         await new Promise(resolve => setTimeout(resolve, 1200 - elapsed));
@@ -196,7 +215,7 @@ const App = () => {
       console.error("Failed to fetch emails:", error);
     } finally {
       setIsLoading(false);
-      setIsTransitioning(false); // End transition
+      setIsTransitioning(false);
     }
   };
 
@@ -220,22 +239,13 @@ const App = () => {
   const getUrgencyTag = (mail) => {
     const subject = (mail.subject || "").toLowerCase();
     const urgentKeywords = ["urgent", "asap", "deadline", "action required", "today", "reminder", "follow up"];
-    
-    if (urgentKeywords.some(keyword => subject.includes(keyword))) {
-      return "urgent";
-    }
-
-    if (!mail.is_read) {
-      return "new";
-    }
-
+    if (urgentKeywords.some(keyword => subject.includes(keyword))) return "urgent";
+    if (!mail.is_read) return "new";
     return null;
   };
 
-  const getFilteredMails = () => {
-    if (activeTab === 'Awaiting Reply') {
-      return mails.filter(m => !m.is_read);
-    }
+  const filteredMails = useMemo(() => {
+    if (activeTab === 'Awaiting Reply') return mails.filter(m => !m.is_read);
     if (activeTab === 'Priority Feed') {
       return mails
         .filter(m => {
@@ -252,9 +262,8 @@ const App = () => {
           return (b.internal_date || 0) - (a.internal_date || 0);
         });
     }
-    // All other tabs (All Mail) show all emails newest first
     return mails;
-  };
+  }, [mails, activeTab, aiResults]);
 
   const handleScan = async () => {
     setIsScanning(true);
@@ -265,7 +274,6 @@ const App = () => {
   const analyzeEmail = async (mail) => {
     const token = localStorage.getItem('mp_token');
     if (!token) return;
-
     setAnalyzingIds(prev => new Set(prev).add(mail.id));
     try {
       const response = await fetch(`${API_BASE}/ai/analyze`, {
@@ -299,11 +307,8 @@ const App = () => {
   const analyzeBatch = async (batch) => {
     const token = localStorage.getItem('mp_token');
     if (!token || batch.length === 0) return;
-
-    // Filter out already analyzed emails
     const toAnalyze = batch.filter(m => !aiResults[m.id]);
     if (toAnalyze.length === 0) return;
-
     setIsAnalyzing(true);
     try {
       const response = await fetch(`${API_BASE}/ai/analyze-batch`, {
@@ -328,9 +333,7 @@ const App = () => {
     setIsFetchingBody(true);
     try {
       const response = await fetch(`${API_BASE}/emails/${id}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
       setFullBodies(prev => ({ ...prev, [id]: data.body }));
@@ -341,389 +344,559 @@ const App = () => {
     }
   };
 
-  const getTagColor = (tag) => {
-    switch (tag) {
-      case 'urgent': return '#F0A500';
-      case 'new': return '#1AAB8A';
-      default: return '#8B949E';
-    }
-  };
-
-  const cleanEmailBody = (text) => {
-    if (!text) return "";
-    let clean = text;
-    // Strip style tags and their content
-    clean = clean.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-    // Strip CSS blocks (anything between { and })
-    clean = clean.replace(/\{[^\}]*\}/g, '');
-    // Strip HTML tags
-    clean = clean.replace(/<[^>]+>/g, '');
-    // Replace HTML entities
-    const entities = {
-      '&nbsp;': ' ',
-      '&amp;': '&',
-      '&lt;': '<',
-      '&gt;': '>',
-      '&#39;': "'",
-      '&quot;': '"'
-    };
-    Object.keys(entities).forEach(entity => {
-      clean = clean.replace(new RegExp(entity, 'g'), entities[entity]);
-    });
-    // Collapse multiple whitespace/newlines
-    clean = clean.replace(/\s+/g, ' ').trim();
-    return clean;
+  const getSenderColor = (name) => {
+    const colors = ['#F0A500', '#1AAB8A', '#7B7BF5', '#FF6B6B', '#A06BFF', '#00D1FF'];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
   };
 
   const selectedMail = mails.find(m => m.id === selectedMailId);
 
   if (!authChecked) return null;
-
-  if (!user) {
-    return <Landing onLogin={handleLogin} />;
-  }
+  if (!user) return <Landing onLogin={handleLogin} />;
 
   return (
     <div className="app-container">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background-color: #0D1117; color: #E6EDF3; font-family: 'DM Sans', sans-serif; overflow: hidden; }
-        .app-container { display: flex; height: 100vh; width: 100vw; user-select: none; }
-
-        /* Logo & Transition Styles */
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-        @keyframes slideInLeft {
-          from { opacity: 0; transform: translateX(-10px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes bouncyScale {
-          0% { opacity: 0; transform: scale(0.8); }
-          100% { opacity: 1; transform: scale(1.0); }
-        }
-        @keyframes glowPulse {
-          0%, 100% { filter: drop-shadow(0 0 10px rgba(240,165,0,0.3)); }
-          50% { filter: drop-shadow(0 0 25px rgba(240,165,0,0.7)); }
+        :root {
+          --bg: #0D1117;
+          --surface: #161B22;
+          --border: #21262D;
+          --border-muted: #30363D;
+          --amber: #F0A500;
+          --teal: #1AAB8A;
+          --text-primary: #E6EDF3;
+          --text-secondary: #8B949E;
+          --font-main: 'DM Sans', sans-serif;
+          --font-serif: 'Instrument Serif', serif;
         }
 
-        .sidebar-logo {
-          height: 28px;
-          width: auto;
-          animation: slideInLeft 0.5s ease forwards;
-          transition: transform 0.15s ease;
-          will-change: transform;
+        body { 
+          background-color: var(--bg); 
+          color: var(--text-primary); 
+          font-family: var(--font-main);
+          overflow: hidden;
+          -webkit-font-smoothing: antialiased;
+        }
+
+        ::selection { background: var(--amber); color: var(--bg); }
+        
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #484F58; }
+
+        .app-container { display: flex; height: 100vh; width: 100vw; }
+
+        /* Sidebar */
+        .sidebar {
+          width: 240px;
+          background: var(--bg);
+          border-right: 1px solid var(--border);
+          display: flex;
+          flex-direction: column;
+          padding: 24px 16px;
+          flex-shrink: 0;
+          overflow-y: auto;
+        }
+
+        .user-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
           margin-bottom: 32px;
+          padding: 0 8px;
         }
-        .sidebar-logo:hover {
-          transform: scale(1.03);
+        .user-avatar-wrap {
+          width: 40px; height: 40px;
+          border-radius: 50%;
+          border: 2px solid var(--amber);
+          padding: 2px;
+          display: flex; align-items: center; justify-content: center;
         }
+        .user-avatar { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+        .user-meta { flex: 1; min-width: 0; }
+        .user-name { font-size: 14px; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .user-email { font-size: 12px; color: var(--text-secondary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sign-out { font-size: 11px; color: var(--text-secondary); cursor: pointer; text-decoration: none; margin-top: 4px; display: inline-block; }
+        .sign-out:hover { color: var(--text-primary); }
 
-        .login-logo-container {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          margin-bottom: 40px;
-        }
-        .login-logo {
-          height: 64px;
-          width: auto;
-          animation: 
-            bouncyScale 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
-            glowPulse 4s ease-in-out infinite;
-          will-change: transform;
-          margin-bottom: 16px;
-        }
-        .login-tagline {
-          font-family: 'Instrument Serif', serif;
-          font-size: 20px;
-          color: #8B949E;
-        }
+        .sidebar-logo-wrap { display: flex; justify-content: center; margin-bottom: 24px; }
+        .sidebar-logo { height: 24px; width: auto; }
+        .divider { height: 1px; background: var(--border); margin-bottom: 24px; }
 
-        .transition-overlay {
-          position: fixed;
-          top: 0; left: 0; right: 0; bottom: 0;
-          background-color: #0D1117;
+        .digest-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 32px; }
+        .digest-card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 12px;
+          text-align: center;
+        }
+        .digest-val { font-size: 28px; font-weight: 600; display: block; }
+        .digest-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+
+        .nav-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 2px; margin: 16px 0 8px 8px; font-weight: 700; }
+        .nav-item {
           display: flex;
-          flex-direction: column;
           align-items: center;
-          justify-content: center;
-          z-index: 9999;
-          transition: opacity 0.5s ease;
+          gap: 12px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          font-size: 13px;
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.15s;
+          margin-bottom: 4px;
         }
-        .transition-logo {
-          height: 96px;
-          width: auto;
-          animation: glowPulse 2s ease-in-out infinite;
-          will-change: transform;
-          margin-bottom: 24px;
-        }
-        .transition-text {
-          font-size: 14px;
-          color: #F0A500;
-          opacity: 0.8;
+        .nav-item:hover { background: var(--surface); color: var(--text-primary); }
+        .nav-item.active {
+          background: var(--surface);
+          border-left: 3px solid var(--amber);
+          color: var(--amber);
           font-weight: 500;
         }
+        .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+        /* Dashboard Styles */
+        .dashboard-container {
+          flex: 1;
+          background: var(--bg);
+          padding: 32px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 32px;
+        }
+
+        .analytics-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 20px;
+        }
+
+        .stat-card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 24px;
+          position: relative;
+          overflow: hidden;
+          transition: all 0.3s ease;
+          display: flex;
+          flex-direction: column;
+        }
+        .stat-card:hover {
+          transform: translateY(-4px);
+          border-color: var(--border-muted);
+          box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+        .stat-card::after {
+          content: '';
+          position: absolute;
+          bottom: 0; left: 0; right: 0;
+          height: 2px;
+          opacity: 0.3;
+        }
+        .stat-card.amber::after { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+        .stat-card.teal::after { background: var(--teal); box-shadow: 0 0 10px var(--teal); }
+        .stat-card.red::after { background: #FF6B6B; box-shadow: 0 0 10px #FF6B6B; }
+        .stat-card.blue::after { background: #7B7BF5; box-shadow: 0 0 10px #7B7BF5; }
+
+        .stat-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .stat-icon { font-size: 24px; }
+        .stat-trend { font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 4px; background: rgba(255,255,255,0.05); }
+        .trend-up { color: var(--teal); }
+        .trend-neutral { color: var(--text-secondary); }
+
+        .stat-value { font-size: 32px; font-weight: 700; margin-bottom: 4px; color: var(--text-primary); }
+        .stat-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+        
+        .sparkline { height: 30px; margin-top: auto; opacity: 0.5; }
+
+        .dashboard-row { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+
+        .panel {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 24px;
+          display: flex;
+          flex-direction: column;
+        }
+        .panel-title { font-size: 16px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+
+        /* Activity Feed */
+        .activity-list { display: flex; flex-direction: column; gap: 16px; }
+        .activity-item {
+          display: flex; gap: 16px; padding: 12px;
+          border-radius: 8px; transition: background 0.2s;
+        }
+        .activity-item:hover { background: rgba(255,255,255,0.03); }
+        .activity-icon {
+          width: 36px; height: 36px; border-radius: 50%;
+          background: var(--bg); display: flex; align-items: center; justify-content: center;
+          font-size: 18px; flex-shrink: 0;
+        }
+        .activity-content { flex: 1; }
+        .activity-text { font-size: 14px; color: var(--text-primary); margin-bottom: 4px; }
+        .activity-time { font-size: 11px; color: var(--text-secondary); }
+
+        /* Insights */
+        .insight-row { display: flex; flex-direction: column; gap: 16px; }
+        .insight-card { font-size: 13px; color: var(--text-secondary); line-height: 1.6; padding-left: 12px; border-left: 2px solid var(--amber); }
+        
+        .progress-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 24px; }
+        .progress-item { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; }
+        .progress-svg { width: 50px; height: 50px; transform: rotate(-90deg); }
+        .progress-bg { fill: none; stroke: var(--bg); stroke-width: 4; }
+        .progress-fill { fill: none; stroke: var(--amber); stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 1s ease-out; }
+        .progress-val { font-size: 11px; font-weight: 700; color: var(--text-primary); }
+        .progress-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* Heatmap */
+        .heatmap-container { padding: 12px 0; overflow-x: auto; }
+        .heatmap-grid { display: flex; gap: 4px; }
+        .heatmap-day-label { font-size: 10px; color: var(--text-secondary); width: 24px; display: flex; align-items: center; }
+        .heatmap-col { display: flex; flex-direction: column; gap: 4px; }
+        .heatmap-cell {
+          width: 12px; height: 12px; border-radius: 2px;
+          background: #1C2128; position: relative;
+        }
+        .heatmap-cell:hover { border: 1px solid var(--text-secondary); }
+        .heatmap-cell[data-level="1"] { background: #0E4429; }
+        .heatmap-cell[data-level="2"] { background: #006D32; }
+        .heatmap-cell[data-level="3"] { background: #26A641; }
+        .heatmap-cell[data-level="4"] { background: #39D353; box-shadow: 0 0 10px #39D35330; }
+
+        /* Briefing History */
+        .history-table { display: flex; flex-direction: column; gap: 8px; }
+        .history-row {
+          display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 0.5fr;
+          padding: 12px 16px; background: var(--bg); border-radius: 8px;
+          align-items: center; font-size: 13px;
+        }
+        .history-waveform { display: flex; align-items: center; gap: 2px; height: 12px; }
+        .hw-bar { width: 2px; background: var(--text-secondary); border-radius: 1px; }
+
+        /* Profile Card */
+        .premium-profile {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 16px;
+          margin-bottom: 24px;
+          transition: all 0.3s ease;
+          position: relative;
+          cursor: default;
+        }
+        .premium-profile:hover {
+          border-color: var(--amber);
+          box-shadow: 0 0 20px rgba(240, 165, 0, 0.1);
+        }
+        .profile-top { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+        .profile-img-wrap { position: relative; width: 48px; height: 48px; }
+        .profile-img { width: 100%; height: 100%; border-radius: 50%; border: 2px solid var(--border); }
+        .online-dot {
+          position: absolute; bottom: 2px; right: 2px;
+          width: 10px; height: 10px; background: var(--teal);
+          border: 2px solid var(--surface); border-radius: 50%;
+        }
+        .profile-name { font-size: 15px; font-weight: 600; display: block; }
+        .profile-email { font-size: 11px; color: var(--text-secondary); display: block; overflow: hidden; text-overflow: ellipsis; }
+        
+        .profile-status {
+          display: inline-flex; align-items: center; gap: 6px;
+          background: rgba(26, 171, 138, 0.1); color: var(--teal);
+          padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
+          margin-bottom: 12px;
+        }
+        .profile-meta {
+          border-top: 1px solid var(--border);
+          padding-top: 12px; display: flex; flex-direction: column; gap: 4px;
+        }
+        .meta-item { font-size: 11px; color: var(--text-secondary); display: flex; justify-content: space-between; }
+        .meta-val { color: var(--text-primary); font-weight: 500; }
+
+        /* Gamification */
+        .badge-strip { display: flex; gap: 8px; margin-top: 16px; }
+        .badge-chip {
+          background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+          padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+          display: flex; align-items: center; gap: 6px;
+        }
+        .badge-chip.amber { color: var(--amber); border-color: rgba(240,165,0,0.3); }
 
         @media (prefers-reduced-motion: reduce) {
           * { animation: none !important; transition: none !important; }
-        }
-
-        .sidebar { width: 220px;
- background-color: #0D1117; border-right: 1px solid #30363D; display: flex; flex-direction: column; padding: 24px 16px; flex-shrink: 0; overflow-y: auto; }
-        .user-profile { margin-bottom: 32px; display: flex; flex-direction: column; align-items: center; text-align: center; }
-        .user-avatar { width: 48px; height: 48px; border-radius: 50%; border: 1px solid #30363D; margin-bottom: 12px; }
-        .user-name { font-size: 13px; font-weight: 600; color: #E6EDF3; }
-        .user-email { font-size: 11px; color: #8B949E; margin-bottom: 8px; }
-        .signout-btn { background: none; border: none; color: #484F58; font-size: 11px; cursor: pointer; }
-        .signout-btn:hover { color: #8B949E; }
-
-        .logo { font-family: 'Instrument Serif', serif; font-size: 24px; display: flex; align-items: center; gap: 10px; margin-bottom: 32px; color: #E6EDF3; }
-        .logo-dot { width: 8px; height: 8px; background-color: #F0A500; border-radius: 50%; }
-
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 32px; }
-        .stat-card { background-color: #161B22; border: 1px solid #30363D; padding: 12px; border-radius: 10px; }
-        .stat-value { font-size: 18px; font-weight: 700; display: block; }
-        .stat-label { font-size: 10px; color: #8B949E; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 4px; }
-
-        .analyzing-indicator { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; padding: 0 8px; }
-        .amber-dot { width: 8px; height: 8px; background-color: #F0A500; border-radius: 50%; animation: pulse-amber 1.5s infinite; }
-        @keyframes pulse-amber { 0% { opacity: 0.4; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.4; transform: scale(0.8); } }
-        .analyzing-text { font-size: 14px; color: #8B949E; }
-
-        .nav-section { margin-bottom: 24px; }
-        .nav-title { font-size: 11px; font-weight: 600; color: #484F58; margin-bottom: 12px; padding-left: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .nav-item { padding: 8px 12px; border-radius: 6px; font-size: 14px; color: #8B949E; cursor: pointer; transition: all 0.2s; margin-bottom: 4px; }
-        .nav-item:hover { background-color: #161B22; color: #E6EDF3; }
-        .nav-item.active { background-color: #161B22; color: #F0A500; font-weight: 500; }
-
-        .skeleton-row { padding: 16px 20px; border-bottom: 1px solid #30363D; background-color: #1C2128; border-radius: 10px; margin: 8px 12px; }
-        .skeleton-line { height: 10px; background-color: #E6EDF3; border-radius: 4px; margin-bottom: 8px; opacity: 0.4; animation: skeleton-pulse 1.2s infinite ease-in-out; }
-        .skeleton-line.short { width: 40%; }
-        .skeleton-line.medium { width: 50%; }
-        .skeleton-line.long { width: 70%; }
-        @keyframes skeleton-pulse { 0% { opacity: 0.3; } 50% { opacity: 0.6; } 100% { opacity: 0.3; } }
-
-        .mail-list { width: 380px; min-width: 380px; background-color: #0D1117; border-right: 1px solid #30363D; display: flex; flex-direction: column; flex-shrink: 0; }
-        .list-header { padding: 24px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363D; }
-        .list-title { font-size: 18px; font-weight: 600; }
-        .scan-btn { background-color: #161B22; border: 1px solid #30363D; color: #E6EDF3; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-        .spinner { width: 12px; height: 12px; border: 2px solid #F0A500; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-        .list-content { overflow-y: auto; flex: 1; }
-        .section-header { font-size: 14px; font-weight: 600; color: #E6EDF3; margin: 16px 20px 8px; }
-
-        .mail-item { padding: 14px 16px; border-bottom: 1px solid #21262D; cursor: pointer; position: relative; transition: background-color 0.2s; }
-        .mail-item:hover { background-color: #161B22; }
-        .mail-item.selected { background-color: #1C2128; }
-        .priority-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
-        .mail-top { display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center; }
-        .unread-dot { width: 6px; height: 6px; background-color: #F0A500; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .sender-name { font-weight: 600; font-size: 14px; }
-        .mail-time { font-size: 11px; color: #484F58; }
-        .mail-subject { font-size: 13px; color: #E6EDF3; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .mail-snippet { font-size: 12px; color: #8B949E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
-        .tag-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 9px; font-weight: 700; text-transform: uppercase; margin-right: 6px; }
-
-        .detail-panel { flex: 1; background-color: #0D1117; display: flex; flex-direction: column; position: relative; }
-        .detail-header { padding: 24px; border-bottom: 1px solid #30363D; }
-        .detail-sender-info { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
-        .avatar { width: 44px; height: 44px; background-color: #161B22; border: 1px solid #30363D; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #F0A500; font-size: 16px; overflow: hidden; }
-        .avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .sender-details h2 { font-size: 18px; font-weight: 600; margin-bottom: 2px; }
-        .sender-email { font-size: 13px; color: #8B949E; }
-        .detail-subject { font-size: 28px; font-weight: 500; color: #E6EDF3; letter-spacing: -0.5px; }
-
-        .detail-body { padding: 24px; overflow-y: auto; flex: 1; padding-bottom: 140px; }
-        .card { background-color: #161B22; border: 1px solid #30363D; border-radius: 10px; padding: 24px; margin-bottom: 24px; }
-        .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 13px; font-weight: 600; color: #F0A500; text-transform: uppercase; letter-spacing: 0.5px; }
-        .card-title { color: #E6EDF3; }
-        .summary-text { font-size: 15px; line-height: 1.8; color: #E6EDF3; white-space: pre-wrap; }
-        
-        .draft-area { background-color: #0D1117; border: 1px solid #30363D; border-radius: 8px; padding: 20px; font-size: 14px; line-height: 1.8; color: #8B949E; margin-bottom: 24px; font-style: italic; }
-        .action-group { display: flex; gap: 12px; }
-        .btn { padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; border: none; }
-        .btn-primary { background-color: #F0A500; color: #0D1117; opacity: 0.5; cursor: not-allowed; }
-        .btn-secondary { background-color: #161B22; border: 1px solid #30363D; color: #E6EDF3; opacity: 0.5; cursor: not-allowed; }
-
-        .voice-bar { position: absolute; bottom: 24px; left: 40px; right: 40px; background-color: #161B22; border: 1px solid #30363D; border-radius: 40px; padding: 14px 28px; display: flex; align-items: center; gap: 20px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); }
-        .play-btn { width: 36px; height: 36px; background-color: #F0A500; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #0D1117; }
-        .waveform { display: flex; align-items: center; gap: 4px; flex: 1; height: 28px; }
-        .wave-bar { width: 3px; background-color: #F0A500; border-radius: 2px; transition: height 0.3s ease; }
-        .wave-active { animation: wave 1.2s ease-in-out infinite; }
-        @keyframes wave { 0%, 100% { height: 6px; } 50% { height: 24px; } }
-        .briefing-info { font-size: 13px; color: #E6EDF3; font-weight: 500; }
-        .whatsapp-btn { background-color: transparent; color: #F0A500; font-size: 13px; font-weight: 600; border: none; }
-
-        /* Attractive Loader Styles */
-        .attractive-loader {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          padding: 32px;
-          min-height: 120px;
-          width: 100%;
-        }
-        .pulse-ring {
-          width: 32px;
-          height: 32px;
-          border: 3px solid #F0A50015;
-          border-radius: 50%;
-          position: relative;
-        }
-        .pulse-ring::after {
-          content: "";
-          position: absolute;
-          top: -3px; left: -3px; right: -3px; bottom: -3px;
-          border: 3px solid #F0A500;
-          border-radius: 50%;
-          border-top-color: transparent;
-          animation: spin 0.8s linear infinite;
-        }
-        .shimmer-text {
-          font-size: 11px;
-          font-weight: 700;
-          color: #F0A500;
-          letter-spacing: 1.2px;
-          text-transform: uppercase;
-          animation: pulse-opacity 1.5s ease-in-out infinite;
-        }
-        @keyframes pulse-opacity {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 1; }
         }
       `}</style>
 
       {isTransitioning && (
         <div className="transition-overlay">
-          <img src="/logo.png" alt="MailPulse" className="transition-logo" />
-          <div className="transition-text">Setting up your inbox...</div>
+          <img src="/logo.png" alt="MailPulse" className="load-logo" />
+          <div className="load-text">Setting up your inbox...</div>
         </div>
       )}
 
       {/* Sidebar */}
       <aside className="sidebar">
-        <div className="user-profile">
-          <img src={user.picture} alt={user.name} className="user-avatar" />
-          <span className="user-name">{user.name}</span>
-          <span className="user-email">{user.email}</span>
-          <button className="signout-btn" onClick={handleLogout}>Sign out</button>
-        </div>
-
-        <img src="/logo.png" alt="MailPulse" className="sidebar-logo" />
-
-        <div className="stats-grid">
-          <div className="stat-card">
-            <span className="stat-value" style={{ color: '#F0A500' }}>
-              {mails.filter(m => aiResults[m.id]?.priority === 'urgent').length}
-            </span>
-            <span className="stat-label">Urgent</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">
-              {mails.filter(m => !m.is_read).length}
-            </span>
-            <span className="stat-label">Unread</span>
-          </div>
-        </div>
-
-        {isAnalyzing && (
-          <div className="analyzing-indicator">
-            <div className="amber-dot" />
-            <span className="analyzing-text">Analyzing emails...</span>
-          </div>
-        )}
-
-        <div className="nav-section">
-          <h3 className="nav-title">Navigation</h3>
-          {['Priority Feed', 'All Mail', 'Awaiting Reply'].map(tab => (
-            <div 
-              key={tab}
-              className={`nav-item ${activeTab === tab ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab)}
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              {tab}
-              {tab === 'Priority Feed' && mails.filter(m => aiResults[m.id]?.priority === 'urgent').length > 0 && (
-                <span style={{ fontSize: '10px', backgroundColor: '#F0A500', color: '#0D1117', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
-                  {mails.filter(m => aiResults[m.id]?.priority === 'urgent').length}
-                </span>
-              )}
+        <div className="premium-profile">
+          <div className="profile-top">
+            <div className="profile-img-wrap">
+              <img src={user.picture} alt={user.name} className="profile-img" />
+              <div className="online-dot"></div>
             </div>
-          ))}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span className="profile-name">{user.name}</span>
+              <span className="profile-email">{user.email}</span>
+            </div>
+          </div>
+          <div className="profile-status">
+            <span>●</span> Connected to Gmail
+          </div>
+          <div className="profile-meta">
+            <div className="meta-item"><span>Member since</span><span className="meta-val">May 2026</span></div>
+            <div className="meta-item"><span>Last sync</span><span className="meta-val">2 mins ago</span></div>
+          </div>
+        </div>
+
+        <div className="sidebar-logo-wrap">
+          <img src="/logo.png" alt="MailPulse" className="sidebar-logo" />
+        </div>
+        
+        <div className="divider"></div>
+
+        <div className="nav-label">Main</div>
+        <div className={`nav-item ${activeTab === 'Dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('Dashboard')}>
+          <span className="nav-icon">📊</span>
+          <span>Dashboard</span>
+        </div>
+        
+        <div className="nav-label">Navigation</div>
+        <div className={`nav-item ${activeTab === 'Priority Feed' ? 'active' : ''}`} onClick={() => setActiveTab('Priority Feed')}>
+          <span className="nav-icon">🔥</span>
+          <span>Priority Feed</span>
+        </div>
+        <div className={`nav-item ${activeTab === 'All Mail' ? 'active' : ''}`} onClick={() => setActiveTab('All Mail')}>
+          <span className="nav-icon">📥</span>
+          <span>All Mail</span>
+        </div>
+        <div className={`nav-item ${activeTab === 'Awaiting Reply' ? 'active' : ''}`} onClick={() => setActiveTab('Awaiting Reply')}>
+          <span className="nav-icon">💬</span>
+          <span>Awaiting Reply</span>
+        </div>
+
+        <div style={{ marginTop: 'auto', padding: '12px 8px' }}>
+          <span className="sign-out" style={{ fontSize: '12px' }} onClick={handleLogout}>Sign out</span>
         </div>
       </aside>
 
-      {/* Mail List */}
-      <main className="mail-list">
-        <header className="list-header">
+      {/* Main Content Area */}
+      {activeTab === 'Dashboard' ? (
+        <div className="dashboard-container">
+          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div>
+              <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '4px' }}>Executive Summary</h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Your AI assistant has been quietly managing your communication ecosystem.</p>
+            </div>
+            <div className="badge-strip">
+              <div className="badge-chip amber">🔥 7 day inbox streak</div>
+              <div className="badge-chip">⚡ Zero missed deadlines</div>
+              <div className="badge-chip amber">🎯 AI Efficiency: 94</div>
+            </div>
+          </header>
+
+          <div className="analytics-grid">
+            {[
+              { label: 'Emails Summarized', val: '1,248', trend: '+18% this week', icon: '✨', class: 'amber' },
+              { label: 'Voice Briefings Sent', val: '326', trend: '91% listened', icon: '🎙️', class: 'teal' },
+              { label: 'Urgent Emails Caught', val: '87', trend: 'No missed deadlines', icon: '⚠️', class: 'red' },
+              { label: 'Hours Saved', val: '42.5', trend: 'Productivity gain', icon: '⏳', class: 'blue' }
+            ].map((s, i) => (
+              <div key={i} className={`stat-card ${s.class}`}>
+                <div className="stat-header">
+                  <span className="stat-icon">{s.icon}</span>
+                  <span className={`stat-trend ${i === 0 ? 'trend-up' : 'trend-neutral'}`}>{s.trend}</span>
+                </div>
+                <div className="stat-value">{s.val}</div>
+                <div className="stat-label">{s.label}</div>
+                <svg className="sparkline" viewBox="0 0 100 30">
+                  <path 
+                    d={`M0,25 Q15,${20-i*2} 30,22 T60,${15+i} T100,${10+i*3}`} 
+                    fill="none" stroke="currentColor" strokeWidth="2"
+                    style={{ opacity: 0.3, color: i === 0 ? 'var(--amber)' : (i === 1 ? 'var(--teal)' : 'inherit') }}
+                  />
+                </svg>
+              </div>
+            ))}
+          </div>
+
+          <div className="dashboard-row">
+            <div className="panel">
+              <h2 className="panel-title"><span>🕒</span> AI Activity Feed</h2>
+              <div className="activity-list">
+                {[
+                  { t: 'Generated WhatsApp morning briefing', d: '2 mins ago', i: '🎙️' },
+                  { t: 'Detected urgent client deadline', d: '14 mins ago', i: '🚨' },
+                  { t: 'Drafted reply for Priya Nair', d: '1 hour ago', i: '✍️' },
+                  { t: 'Summarized 18 unread emails', d: '3 hours ago', i: '📊' },
+                  { t: 'Clustered 6 related conversations', d: 'Yesterday', i: '🧠' }
+                ].map((a, i) => (
+                  <div key={i} className="activity-item">
+                    <div className="activity-icon">{a.i}</div>
+                    <div className="activity-content">
+                      <div className="activity-text">{a.t}</div>
+                      <div className="activity-time">{a.d}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2 className="panel-title"><span>💡</span> AI Productivity Insights</h2>
+              <div className="insight-row">
+                <div className="insight-card">You reply 34% faster in the morning session.</div>
+                <div className="insight-card">Client emails are your highest priority category this month.</div>
+                <div className="insight-card">Most urgent emails arrive between 8am–10am.</div>
+                <div className="insight-card">You ignored 12 low-priority promotional emails this week.</div>
+              </div>
+              
+              <div className="progress-grid">
+                {[
+                  { label: 'Efficiency', val: 88 },
+                  { label: 'Inbox Zero', val: 92 },
+                  { label: 'Deadlines', val: 100 }
+                ].map((p, i) => (
+                  <div key={i} className="progress-item">
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifySelf: 'center' }}>
+                      <svg className="progress-svg">
+                        <circle className="progress-bg" cx="25" cy="25" r="20" />
+                        <circle className="progress-fill" cx="25" cy="25" r="20" 
+                          style={{ strokeDasharray: 126, strokeDashoffset: 126 - (126 * p.val) / 100 }} 
+                        />
+                      </svg>
+                      <span className="progress-val" style={{ position: 'absolute', width: '100%', textAlign: 'center' }}>{p.val}%</span>
+                    </div>
+                    <span className="progress-label">{p.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <h2 className="panel-title"><span>📅</span> Weekly Communication Activity</h2>
+            <div className="heatmap-container">
+              <div className="heatmap-grid">
+                <div className="heatmap-day-labels">
+                  {['Mon', '', 'Wed', '', 'Fri', '', ''].map((d, i) => (
+                    <div key={i} className="heatmap-day-label" style={{ height: '12px', marginBottom: '4px' }}>{d}</div>
+                  ))}
+                </div>
+                {[...Array(24)].map((_, i) => (
+                  <div key={i} className="heatmap-col">
+                    {[...Array(7)].map((_, j) => (
+                      <div key={j} className="heatmap-cell" data-level={Math.floor(Math.random() * 5)}></div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '4px', marginTop: '12px', alignItems: 'center' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Less</span>
+                {[0,1,2,3,4].map(l => <div key={l} className="heatmap-cell" data-level={l}></div>)}
+                <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>More</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <h2 className="panel-title"><span>🎙️</span> Recent Voice Briefings</h2>
+            <div className="history-table">
+              {[
+                { d: 'Monday', t: '47s', e: 12, s: 'Sent' },
+                { d: 'Tuesday', t: '1m 12s', e: 21, s: 'Sent' },
+                { d: 'Wednesday', t: '39s', e: 8, s: 'Pending' }
+              ].map((h, i) => (
+                <div key={i} className="history-row">
+                  <span style={{ fontWeight: '600' }}>{h.d}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{h.t}</span>
+                  <span>{h.e} emails</span>
+                  <div className="history-waveform">
+                    {[...Array(8)].map((_, k) => (
+                      <div key={k} className="hw-bar" style={{ height: `${4 + Math.random() * 8}px` }}></div>
+                    ))}
+                  </div>
+                  <span style={{ color: h.s === 'Sent' ? 'var(--teal)' : 'var(--amber)', fontWeight: '700', fontSize: '10px' }}>{h.s}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Mail List */}
+          <main className="mail-list">
+        <header className="list-topbar">
           <h1 className="list-title">{activeTab}</h1>
-          <button className="scan-btn" onClick={handleScan} disabled={isScanning}>
-            {isScanning ? <><div className="spinner" /> Scanning...</> : "Scan now"}
+          <button className="scan-now" onClick={handleScan} disabled={isScanning}>
+            {isScanning ? <div className="spinner"></div> : <span>↻</span>}
+            {isScanning ? "Scanning..." : "Scan now"}
           </button>
         </header>
 
-        <div className="list-content">
-          <div className="section-header">{activeTab}</div>
+        {isAnalyzing && (
+          <div className="analyzing-indicator">
+            <div className="pulsing-dot"></div>
+            <span>AI Analyzing your inbox...</span>
+          </div>
+        )}
+
+        <div className="list-scroll">
           {isLoading ? (
-            [...Array(5)].map((_, i) => (
+            [...Array(6)].map((_, i) => (
               <div key={i} className="skeleton-row">
-                <div className="skeleton-line long" />
-                <div className="skeleton-line medium" />
-                <div className="skeleton-line short" />
+                <div className="skel-line" style={{ width: '60%' }}></div>
+                <div className="skel-line" style={{ width: '85%' }}></div>
+                <div className="skel-line" style={{ width: '45%' }}></div>
               </div>
             ))
-          ) : activeTab === 'Priority Feed' && isAnalyzing && getFilteredMails().length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100px', gap: '12px' }}>
-              <div className="amber-dot" />
-              <span className="analyzing-text">Scanning for priority emails...</span>
-            </div>
-          ) : activeTab === 'Priority Feed' && !isAnalyzing && getFilteredMails().length === 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100px', color: '#484F58', fontSize: '14px' }}>
-              No urgent emails right now
+          ) : filteredMails.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">✅</div>
+              <div className="empty-title">All caught up!</div>
+              <div className="empty-subtitle">Your inbox is clean for this view.</div>
             </div>
           ) : (
-            getFilteredMails().map(mail => (
+            filteredMails.map(mail => (
               <div 
                 key={mail.id} 
-                className={`mail-item ${selectedMailId === mail.id ? 'selected' : ''}`}
+                className={`mail-row ${selectedMailId === mail.id ? 'selected' : ''}`}
                 onClick={() => setSelectedMailId(mail.id)}
               >
-                <div className="priority-bar" style={{ backgroundColor: getTagColor(mail.tag) }} />
-                <div className="mail-top">
-                  <span className="sender-name">
-                    {!mail.is_read && <div className="unread-dot" />}
-                    {mail.from_name}
-                  </span>
-                  <span className="mail-time">{new Date(mail.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-                <div className="mail-subject">{mail.subject}</div>
-                <div className="mail-snippet">{mail.snippet}</div>
-                <div className="tag-group">
-                  {aiResults[mail.id] ? (
-                    <>
-                      {aiResults[mail.id].priority === 'urgent' && (
-                        <div className="tag-badge" style={{ backgroundColor: '#F0A50015', color: '#F0A500', border: '1px solid #F0A50030' }}>URGENT</div>
-                      )}
-                      {aiResults[mail.id].requires_reply && aiResults[mail.id].priority !== 'urgent' && (
-                        <div className="tag-badge" style={{ backgroundColor: '#1AAB8A15', color: '#1AAB8A', border: '1px solid #1AAB8A30' }}>REPLY</div>
-                      )}
-                    </>
-                  ) : mail.tag && (
-                    <div className="tag-badge" style={{ backgroundColor: `${getTagColor(mail.tag)}15`, color: getTagColor(mail.tag) }}>
-                      {mail.tag}
-                    </div>
-                  )}
-                  {mail.labels && mail.labels.includes('IMPORTANT') && (
-                    <div className="tag-badge" style={{ backgroundColor: '#F0A50015', color: '#F0A500' }}>important</div>
-                  )}
-                  {mail.labels && mail.labels.includes('CATEGORY_PROMOTIONS') && (
-                    <div className="tag-badge" style={{ backgroundColor: '#484F5815', color: '#8B949E' }}>promo</div>
-                  )}
+                <div 
+                  className="priority-dot" 
+                  style={{ background: aiResults[mail.id]?.priority === 'urgent' ? 'var(--amber)' : (!mail.is_read ? 'var(--teal)' : 'var(--border-muted)') }}
+                ></div>
+                <div className="row-content">
+                  <div className="row-line1">
+                    <span className="row-sender">{mail.from_name}</span>
+                    <span className="row-time">{new Date(mail.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <div className="row-subject">{mail.subject}</div>
+                  <div className="row-snippet">{mail.snippet}</div>
+                  
+                  <div className="badge-group">
+                    {aiResults[mail.id]?.priority === 'urgent' && <span className="badge badge-urgent">Urgent</span>}
+                    {!mail.is_read && <span className="badge badge-new">New</span>}
+                    {mail.labels?.includes('IMPORTANT') && <span className="badge badge-important">Important</span>}
+                    {mail.labels?.includes('CATEGORY_PROMOTIONS') && <span className="badge badge-promo">Promo</span>}
+                  </div>
                 </div>
               </div>
             ))
@@ -734,165 +907,148 @@ const App = () => {
       {/* Detail Panel */}
       <section className="detail-panel">
         {selectedMail ? (
-          <>
+          <div key={selectedMail.id} className="slide-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <header className="detail-header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div className="detail-sender-info">
-                  <div className="avatar">
-                    {selectedMail.from_name[0]}
-                  </div>
-                  <div className="sender-details">
-                    <h2>{selectedMail.from_name}</h2>
-                    <p className="sender-email">{selectedMail.from_email}</p>
-                  </div>
+              <div className="sender-box">
+                <div className="sender-avatar" style={{ background: getSenderColor(selectedMail.from_name) }}>
+                  {selectedMail.from_name[0]}
                 </div>
-                <a 
-                  href={`https://mail.google.com/mail/u/0/#inbox/${selectedMail.id}`} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="scan-btn"
-                  style={{ textDecoration: 'none' }}
-                >
-                  Open in Gmail
-                </a>
+                <div className="sender-meta">
+                  <h3>{selectedMail.from_name}</h3>
+                  <p>{selectedMail.from_email}</p>
+                  <h1 className="detail-subject">{selectedMail.subject}</h1>
+                </div>
               </div>
-              <h1 className="detail-subject">{selectedMail.subject}</h1>
+              <a 
+                href={`https://mail.google.com/mail/u/0/#inbox/${selectedMail.id}`} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="open-gmail"
+              >
+                Open in Gmail
+              </a>
             </header>
 
-            <div className="detail-body">
+            <div className="detail-content">
+              {/* AI Context Card */}
               <div className="card">
-                <div className="card-header" style={{ justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3h1V5.73c-.6-.34-1-1.01-1-1.73a2 2 0 0 1 2-2M9 9a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1H9m3 2a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2z" />
-                    </svg>
-                    <span className="card-title">{aiResults[selectedMail.id] ? "AI Context Summary" : (fullBodies[selectedMail.id] ? "Full Email Content" : "Email preview")}</span>
-                  </div>
-                  {!aiResults[selectedMail.id] && !analyzingIds.has(selectedMail.id) && (
-                    <button 
-                      className="scan-btn" 
-                      style={{ fontSize: '10px', padding: '4px 10px', backgroundColor: '#F0A50015', color: '#F0A500' }}
-                      onClick={() => analyzeEmail(selectedMail)}
-                    >
-                      Analyze this email
-                    </button>
-                  )}
-                  {!fullBodies[selectedMail.id] && !isFetchingBody && (
-                    <button 
-                      className="scan-btn" 
-                      style={{ fontSize: '10px', padding: '4px 10px' }}
-                      onClick={() => fetchFullEmail(selectedMail.id)}
-                    >
-                      View Full Email
-                    </button>
-                  )}
-                  {isFetchingBody && <div className="spinner" style={{ width: '14px', height: '14px' }} />}
+                <div className="card-label">
+                  <span>✨</span> AI Context Summary
                 </div>
                 {analyzingIds.has(selectedMail.id) ? (
-                  <AttractiveLoader text="Analyzing with AI..." />
+                  <div className="empty-state" style={{ height: '100px' }}>
+                    <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
+                    <div className="empty-subtitle">Analyzing context...</div>
+                  </div>
                 ) : aiResults[selectedMail.id] ? (
                   <>
-                    <p className="summary-text">{aiResults[selectedMail.id].summary || "No summary available."}</p>
+                    <p className="summary-text">{aiResults[selectedMail.id].summary}</p>
                     {aiResults[selectedMail.id].deadline && (
-                      <div className="tag-badge" style={{ backgroundColor: '#ff444415', color: '#ff4444', marginTop: '16px', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px' }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm1 5h-2v7h6v-2h-4V7z"/></svg>
-                        Deadline: {aiResults[selectedMail.id].deadline}
+                      <div className="deadline-chip">
+                        🕒 Deadline: {aiResults[selectedMail.id].deadline}
                       </div>
                     )}
                   </>
-                ) : fullBodies[selectedMail.id] ? (
-                  <EmailPreview html={fullBodies[selectedMail.id]} />
                 ) : (
-                  <p className="summary-text" style={{ maxHeight: '200px', overflowY: 'hidden' }}>
-                    {cleanEmailBody(selectedMail.body_preview || selectedMail.snippet)}
-                  </p>
+                  <div style={{ textAlign: 'center', padding: '12px' }}>
+                    <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
+                    <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
+                      Analyze with Groq AI
+                    </button>
+                  </div>
                 )}
               </div>
 
+              {/* Thread History Card */}
               <div className="card">
-                <div className="card-header" style={{ color: '#8B949E' }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 0 1 7-7 7 7 0 0 1 7 7 7 7 0 0 1-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 9-9 9 9 0 0 0-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
-                  </svg>
-                  <span className="card-title">Thread History</span>
+                <div className="card-label">
+                  <span>🕒</span> Thread History
                 </div>
                 <div className="history-item">
                   Received on {new Date(selectedMail.date).toLocaleDateString()} at {new Date(selectedMail.date).toLocaleTimeString()}
-                  <br />
-                  Labels: {selectedMail.labels ? selectedMail.labels.join(', ') : 'None'}
+                </div>
+                <div className="label-pills">
+                  {selectedMail.labels?.map(l => (
+                    <span key={l} className="pill">{l.replace('CATEGORY_', '').toLowerCase()}</span>
+                  ))}
                 </div>
               </div>
 
+              {/* Email Content Card */}
               <div className="card">
-                <div className="card-header">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7l2.5-1.4M19.5 15.4L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14l-2.5 1.4M22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5L22 2M13.37 8.13c-.39-.39-1.02-.39-1.41 0L2.7 17.3c-.39.39-.39 1.02 0 1.41l2.59 2.59c.39.39 1.02.39 1.41 0l9.27-9.27c.39-.39.39-1.02 0-1.41l-2.6-2.5z" />
-                  </svg>
-                  <span className="card-title">AI Draft Reply</span>
+                <div className="card-label">
+                  <span>✉️</span> Email Content
                 </div>
-                {analyzingIds.has(selectedMail.id) ? (
-                  <AttractiveLoader text="Drafting reply..." />
+                {fullBodies[selectedMail.id] ? (
+                  <EmailPreview html={fullBodies[selectedMail.id]} />
                 ) : (
+                  <div>
+                    <p className="summary-text" style={{ opacity: 0.7, marginBottom: '16px' }}>{selectedMail.snippet}...</p>
+                    <button className="btn-sec" onClick={() => fetchFullEmail(selectedMail.id)}>
+                      {isFetchingBody ? <div className="spinner"></div> : "View Full Email"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* AI Draft Card */}
+              <div className="card">
+                <div className="card-label">
+                  <span>✍️</span> AI Draft Reply
+                </div>
+                {aiResults[selectedMail.id]?.draft_reply ? (
                   <>
-                    <div className="draft-area">
-                      {aiResults[selectedMail.id] ? 
-                        (aiResults[selectedMail.id].draft_reply || "AI unavailable — try again") : 
-                        "AI drafting is coming in the next iteration..."}
-                    </div>
-                    <div className="action-group">
-                      <button className="btn btn-primary" style={{ opacity: aiResults[selectedMail.id] ? 1 : 0.5, cursor: aiResults[selectedMail.id] ? 'pointer' : 'not-allowed' }}>Send reply</button>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ opacity: 1, cursor: 'pointer' }}
-                        onClick={() => analyzeEmail(selectedMail)}
-                      >
-                        Regenerate
-                      </button>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ opacity: aiResults[selectedMail.id] ? 1 : 0.5, cursor: aiResults[selectedMail.id] ? 'pointer' : 'not-allowed' }}
-                        onClick={() => {
-                          if (aiResults[selectedMail.id]?.draft_reply) {
-                            navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply);
-                          }
-                        }}
-                      >
-                        Copy
-                      </button>
+                    <div className="draft-text">{aiResults[selectedMail.id].draft_reply}</div>
+                    <div className="btn-row">
+                      <button className="btn-send">Send reply</button>
+                      <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
+                      <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply)}>Copy</button>
                     </div>
                   </>
+                ) : (
+                  <div className="draft-text draft-placeholder">
+                    {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
+                  </div>
                 )}
               </div>
             </div>
-          </>
+
+            {/* Voice Briefing Bar */}
+            <div className="voice-bar">
+              <div className="play-circle" onClick={() => setIsPlayingBriefing(!isPlayingBriefing)}>
+                {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
+              </div>
+              <div className="briefing-meta">
+                <span className="briefing-title">Morning briefing ready</span>
+                <span className="briefing-sub">47s · Tap to play</span>
+              </div>
+              <div className="waveform">
+                {[...Array(24)].map((_, i) => (
+                  <div 
+                    key={i} 
+                    className={`wave-bar ${isPlayingBriefing ? 'active' : ''}`} 
+                    style={{ 
+                      height: isPlayingBriefing ? '' : `${[8,14,10,18,12,20,10,16,8,22,12,18,8,20,14,24,10,18,8,12,6,16,10,14][i]}px`,
+                      animationDelay: `${i * 0.05}s` 
+                    }}
+                  ></div>
+                ))}
+              </div>
+              <button className="whatsapp-btn">
+                <span>✉</span> Send to WhatsApp
+              </button>
+            </div>
+          </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#484F58' }}>
-            Select an email to view details
+          <div className="empty-state" style={{ height: '100%' }}>
+            <div className="empty-icon">📨</div>
+            <div className="empty-title">Select an email to read</div>
+            <div className="empty-subtitle">Pick something from the list to see AI insights.</div>
           </div>
         )}
-
-        {/* Voice Briefing Panel */}
-        <div className="voice-bar">
-          <div className="play-btn" onClick={() => setIsPlayingBriefing(!isPlayingBriefing)}>
-            {isPlayingBriefing ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-            )}
-          </div>
-          <div className="briefing-info">Morning briefing ready · 47s</div>
-          <div className="waveform">
-            {[...Array(24)].map((_, i) => (
-              <div 
-                key={i} 
-                className={`wave-bar ${isPlayingBriefing ? 'wave-active' : ''}`} 
-                style={{ height: isPlayingBriefing ? '' : `${[8,12,6,18,14,22,10,16,8,24,12,18,6,20,14,24,10,18,8,12,6,16,10,14][i]}px`, animationDelay: `${i * 0.05}s` }} 
-              />
-            ))}
-          </div>
-          <button className="whatsapp-btn">Send to WhatsApp</button>
-        </div>
       </section>
+      </>
+    )}
     </div>
   );
 };
