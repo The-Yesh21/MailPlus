@@ -169,6 +169,7 @@ const App = () => {
   });
   const [isFetchingStats, setIsFetchingStats] = useState(false);
   const [globalError, setGlobalError] = useState(null);
+  const [profileImgError, setProfileImgError] = useState(false);
 
   const API_BASE = "http://localhost:8000";
 
@@ -401,16 +402,13 @@ const App = () => {
       });
       if (!batchResp.ok) throw new Error("Batch analysis failed");
       const batchData = await batchResp.json();
-      console.log("Raw batch response:", batchData);
-      console.log("Results keys:", Object.keys(batchData.results || {}));
+      console.log("Batch response:", JSON.stringify(batchData))
+      if (batchData.results) {
+        setAiResults(prev => ({ ...prev, ...batchData.results }))
+        console.log("AI results set:", Object.keys(batchData.results))
+      }
 
       if (batchData && batchData.results) {
-        setAiResults(prev => {
-          const merged = { ...prev, ...batchData.results };
-          console.log("Merged aiResults:", merged);
-          return merged;
-        });
-
         // Update stats locally
         const results = Object.values(batchData.results || {});
         const urgentCount = results.filter(r => r.priority === 'urgent').length;
@@ -580,7 +578,7 @@ const App = () => {
           .sign-out:hover { color: var(--text-primary); }
 
           .sidebar-logo-wrap { display: flex; justify-content: center; margin-bottom: 24px; }
-          .sidebar-logo { height: 24px; width: auto; }
+          .sidebar-logo { height: 24px; width: auto; display: block; margin: 12px auto; }
           .divider { height: 1px; background: var(--border); margin-bottom: 24px; }
 
           .digest-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 32px; }
@@ -743,15 +741,23 @@ const App = () => {
             box-shadow: 0 0 20px rgba(240, 165, 0, 0.1);
           }
           .profile-top { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
-          .profile-img-wrap { position: relative; width: 48px; height: 48px; }
-          .profile-img { width: 100%; height: 100%; border-radius: 50%; border: 2px solid var(--border); }
+          .profile-img-wrap { position: relative; width: 40px; height: 40px; }
+          .profile-img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #F0A500; object-fit: cover; }
           .online-dot {
             position: absolute; bottom: 2px; right: 2px;
             width: 10px; height: 10px; background: var(--teal);
             border: 2px solid var(--surface); border-radius: 50%;
           }
-          .profile-name { font-size: 15px; font-weight: 600; display: block; }
-          .profile-email { font-size: 11px; color: var(--text-secondary); display: block; overflow: hidden; text-overflow: ellipsis; }
+          .profile-name { 
+            font-size: 13px; font-weight: 500; color: #E6EDF3; 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+            max-width: 140px; display: block; 
+          }
+          .profile-email { 
+            font-size: 11px; color: #8B949E; 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+            max-width: 140px; display: block; 
+          }
           
           .profile-status {
             display: inline-flex; align-items: center; gap: 6px;
@@ -1006,6 +1012,30 @@ const App = () => {
           }
           @keyframes spin { to { transform: rotate(360deg); } }
 
+          /* Bug 1: Transition Overlay */
+          .transition-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #0D1117;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+          }
+          .load-logo {
+            height: 72px;
+            width: auto;
+            display: block;
+            margin: 0 auto 16px auto;
+            max-width: 120px;
+          }
+          .load-text {
+            font-size: 14px;
+            color: #F0A500;
+            margin-bottom: 16px;
+          }
+
           .skeleton-row { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
           .skel-line { height: 10px; background: var(--border-muted); border-radius: 4px; animation: pulse-skel 1.5s infinite; }
           @keyframes pulse-skel { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.8; } }
@@ -1027,6 +1057,7 @@ const App = () => {
           <div className="transition-overlay">
             <img src="/logo.png" alt="MailPulse" className="load-logo" />
             <div className="load-text">Setting up your inbox...</div>
+            <div className="spinner"></div>
           </div>
         )}
 
@@ -1046,10 +1077,29 @@ const App = () => {
           <div className="premium-profile">
             <div className="profile-top">
               <div className="profile-img-wrap">
-                <img src={user.picture} alt={user.name} className="profile-img" />
+                {!profileImgError ? (
+                  <img 
+                    src={user.picture} 
+                    alt={user.name} 
+                    className="profile-img" 
+                    onError={() => setProfileImgError(true)}
+                  />
+                ) : (
+                  <div className="profile-img" style={{ 
+                    background: '#F0A500', 
+                    color: '#0D1117', 
+                    fontWeight: 600, 
+                    fontSize: '16px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center' 
+                  }}>
+                    {user.name ? user.name[0] : '?'}
+                  </div>
+                )}
                 <div className="online-dot"></div>
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                 <span className="profile-name">{user.name}</span>
                 <span className="profile-email">{user.email}</span>
               </div>
@@ -1064,7 +1114,12 @@ const App = () => {
           </div>
 
           <div className="sidebar-logo-wrap">
-            <img src="/logo.png" alt="MailPulse" className="sidebar-logo" />
+            <img 
+              src="/logo.png" 
+              alt="MailPulse" 
+              className="sidebar-logo" 
+              onError={(e) => e.target.style.display='none'}
+            />
           </div>
           
           <div className="divider"></div>
@@ -1331,19 +1386,12 @@ const App = () => {
                         <span>✨</span> AI Context Summary
                       </div>
                       {(() => {
-                        const emailId = selectedMail?.id;
-                        const aiData = emailId ? aiResults[emailId] : null;
-                        
-                        if (analyzingIds.has(emailId)) {
-                          return (
-                            <div className="empty-state" style={{ height: '100px' }}>
-                              <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
-                              <div className="empty-subtitle">Analyzing context...</div>
-                            </div>
-                          );
-                        }
-                        
-                        if (aiData) {
+                        const emailId = selectedMail?.id
+                        const aiData = aiResults[emailId]
+                        const hasSummary = aiData && aiData.summary && 
+                          aiData.summary !== 'null' && aiData.summary.length > 10
+
+                        if (hasSummary) {
                           return (
                             <>
                               <p className="summary-text">{aiData.summary}</p>
@@ -1353,7 +1401,16 @@ const App = () => {
                                 </div>
                               )}
                             </>
-                          );
+                          )
+                        }
+
+                        if (emailId in aiResults) {
+                          return (
+                            <div className="empty-state" style={{ height: '100px' }}>
+                              <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
+                              <div className="empty-subtitle">Analyzing...</div>
+                            </div>
+                          )
                         }
 
                         return (
@@ -1363,7 +1420,7 @@ const App = () => {
                               ✨ Analyze this email
                             </button>
                           </div>
-                        );
+                        )
                       })()}
                     </div>
 
