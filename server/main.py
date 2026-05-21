@@ -2,6 +2,7 @@ import urllib
 import asyncio
 import traceback
 import json
+import requests
 import os
 import base64
 import re
@@ -37,6 +38,7 @@ REDIRECT_URI         = os.getenv("REDIRECT_URI")
 FRONTEND_URL         = os.getenv("FRONTEND_URL", "http://localhost:5173")
 SECRET_KEY           = os.getenv("SECRET_KEY", "fallback-secret-key")
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY")
+HF_TOKEN             = os.getenv("HF_TOKEN")
 ALGORITHM            = "HS256"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -195,7 +197,7 @@ def parse_priority_json(raw: str) -> dict:
         return fallback
 
 
-# ── Groq ─────────────────────────────────────────────────────────────────────
+# ── Groq Hybrid Engine ──────────────────────────────────────────────────────
 
 def call_groq(prompt: str, system: str, max_tokens: int = 400) -> str:
     for attempt in range(3):
@@ -215,22 +217,17 @@ def call_groq(prompt: str, system: str, max_tokens: int = 400) -> str:
             if '429' in str(e):
                 import time
                 wait = 2 * (attempt + 1)
-                print(f"Rate limit — waiting {wait}s (attempt {attempt+1}/3)")
                 time.sleep(wait)
                 continue
             print(f"Groq error: {e}")
             return None
     return None
 
-
-# ── AI prompt template ───────────────────────────────────────────────────────
-
 def build_prompt(from_name, subject, body_preview):
     return f"""Analyze this email and respond with ONLY a valid JSON object, no markdown, no explanation:
 {{
   "priority": "urgent" or "normal" or "low",
   "reason": "one sentence why",
-  "deadline": "deadline phrase or null",
   "requires_reply": true or false,
   "summary": "exactly 2 sentences about what this email is and what action is needed",
   "draft_reply": "3 sentence professional reply signed as Yeshwanth"
@@ -240,6 +237,32 @@ From: {from_name}
 Subject: {subject}
 Preview: {body_preview[:400]}"""
 
+def analyze_email_hf(from_name, subject, body_preview):
+    # Despite the name 'analyze_email_hf' used by other endpoints, we use Groq + Regex here
+    raw = call_groq(build_prompt(from_name, subject, body_preview), "You are an email assistant. Reply only with valid JSON.", 400)
+    data = parse_priority_json(raw)
+    
+    # 1. Deterministic Deadline Parsing (Overrides AI Hallucinations)
+    text_to_analyze = f"{subject} {body_preview}"
+    deadline = None
+    deadline_match = re.search(r'within the next (\d+)\s+(hours?|minutes?|days?)', text_to_analyze, re.IGNORECASE)
+    if deadline_match:
+        deadline = f"within the next {deadline_match.group(1)} {deadline_match.group(2)}"
+    elif re.search(r'by tomorrow', text_to_analyze, re.IGNORECASE):
+        deadline = "by tomorrow"
+        
+    priority = data.get("priority", "normal")
+    if deadline:
+        priority = "urgent" # Force urgent if strict deadline is found
+
+    return {
+        "priority": priority,
+        "reason": data.get("reason", "Categorized by AI"),
+        "deadline": deadline,
+        "requires_reply": data.get("requires_reply", False),
+        "summary": data.get("summary", "Could not generate summary."),
+        "draft_reply": data.get("draft_reply", "Draft generation failed.")
+    }
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -478,17 +501,13 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 
     loop = asyncio.get_event_loop()
     try:
-        raw = await loop.run_in_executor(
+        data = await loop.run_in_executor(
             None,
-            partial(call_groq,
-                    build_prompt(from_name, subject, body_preview),
-                    "You are an email assistant. Reply only with valid JSON exactly as instructed. No markdown, no explanation.",
-                    400)
+            partial(analyze_email_hf, from_name, subject, body_preview)
         )
-        data = parse_priority_json(raw)
 
         is_urgent       = data.get("priority") == "urgent"
-        has_valid_draft = bool(data.get("draft_reply")) and "unavailable" not in data.get("draft_reply", "")
+        has_valid_draft = False
 
         result = {
             "email_id":      email_id,
@@ -548,17 +567,13 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             body_preview = email.get("body_preview", "")
 
             loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(
+            data = await loop.run_in_executor(
                 None,
-                partial(call_groq,
-                        build_prompt(from_name, subject, body_preview),
-                        "You are an email assistant. Reply only with valid JSON.",
-                        400)
+                partial(analyze_email_hf, from_name, subject, body_preview)
             )
-            data = parse_priority_json(raw)
 
             is_urgent       = data.get("priority") == "urgent"
-            has_valid_draft = bool(data.get("draft_reply")) and "unavailable" not in data.get("draft_reply", "")
+            has_valid_draft = False
 
             result = {
                 "priority":      data.get("priority", "normal"),

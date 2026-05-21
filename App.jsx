@@ -264,6 +264,7 @@ const App = () => {
   const [aiResults, setAiResults] = useState({});
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [analyzingIds, setAnalyzingIds] = useState(new Set());
   const [dashboardStats, setDashboardStats] = useState({
     total_emails: 0,
@@ -472,7 +473,7 @@ const App = () => {
       });
       if (!response.ok) throw new Error("AI analysis failed");
       const data = await response.json();
-      console.log("Single AI analysis result:", data);
+      // console.log("Single AI analysis result:", data);
       setAiResults(prev => ({ ...prev, [emailId]: data }));
       // Refresh stats from Firestore via backend
       fetchDashboardStats();
@@ -506,10 +507,10 @@ const App = () => {
       });
       if (!batchResp.ok) throw new Error("Batch analysis failed");
       const batchData = await batchResp.json();
-      console.log("Batch response:", JSON.stringify(batchData))
+      // console.log("Batch response:", JSON.stringify(batchData))
       if (batchData.results) {
         setAiResults(prev => ({ ...prev, ...batchData.results }))
-        console.log("AI results set:", Object.keys(batchData.results))
+        // console.log("AI results set:", Object.keys(batchData.results))
       }
       // Refresh stats from Firestore via backend
       fetchDashboardStats();
@@ -589,6 +590,12 @@ const App = () => {
   return (
     <ErrorBoundary>
       <div className="app-container">
+        {/* Mobile Header */}
+        <div className="mobile-header">
+          <div className="mobile-header-title">MailPulse</div>
+          <button className="hamburger" onClick={() => setMobileSidebarOpen(true)}>☰</button>
+        </div>
+        <div className={`mobile-overlay ${mobileSidebarOpen ? 'show' : ''}`} onClick={() => setMobileSidebarOpen(false)}></div>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
 
@@ -611,6 +618,58 @@ const App = () => {
             --mesh-4: radial-gradient(at 0% 100%, rgba(50,173,230,0.1) 0px, transparent 50%);
           }
 
+
+          /* Mobile Responsiveness */
+          .mobile-header { display: none; }
+          .mobile-overlay { display: none; }
+          .mobile-back-btn { display: none; }
+          @media (max-width: 768px) {
+            .app-container { flex-direction: column; }
+            .mobile-header {
+              display: flex; align-items: center; justify-content: space-between;
+              padding: 16px 20px; background: rgba(5,5,5,0.7); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+              border-bottom: 1px solid var(--border); z-index: 10; flex-shrink: 0;
+            }
+            .mobile-header-title { font-family: var(--font-serif); font-size: 24px; font-weight: 500; color: var(--text-primary); }
+            .hamburger { background: transparent; border: none; color: var(--text-primary); font-size: 24px; cursor: pointer; }
+            
+            .sidebar {
+              position: absolute; top: 0; left: 0; bottom: 0; z-index: 100; width: 280px;
+              transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+              background: rgba(5, 5, 5, 0.95);
+            }
+            .sidebar.open { transform: translateX(0); box-shadow: 10px 0 40px rgba(0,0,0,0.8); }
+            
+            .mobile-overlay {
+              display: block; position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+              z-index: 90; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            }
+            .mobile-overlay.show { opacity: 1; pointer-events: auto; }
+            
+            .mail-list { width: 100%; height: calc(100vh - 65px); flex: none; }
+            .list-topbar { padding: 16px; flex-direction: column; align-items: flex-start; gap: 12px; }
+            .list-title { font-size: 28px; }
+            .scan-now { width: 100%; justify-content: center; }
+
+            
+            .detail-panel {
+              position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50;
+              background: var(--bg);
+              transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            }
+            .detail-panel.active { transform: translateX(0); }
+            
+            .mobile-back-btn {
+              display: inline-flex; align-items: center; gap: 8px;
+              padding: 8px 16px; margin: 16px 16px 0;
+              background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+              color: var(--text-primary); font-size: 13px; font-weight: 600; cursor: pointer;
+            }
+            
+            .dashboard-container { padding: 16px; height: calc(100vh - 65px); }
+            .analytics-grid { grid-template-columns: 1fr; }
+            .badge-strip { display: none; }
+          }
           body { 
             background-color: var(--bg);
             background-image: var(--mesh-1), var(--mesh-2), var(--mesh-3), var(--mesh-4);
@@ -1176,7 +1235,7 @@ const App = () => {
         )}
 
         {/* Sidebar */}
-        <aside className="sidebar">
+        <aside className={`sidebar ${mobileSidebarOpen ? "open" : ""}`}>
           <div className="premium-profile">
             <div className="profile-top">
               <div className="profile-img-wrap">
@@ -1228,25 +1287,25 @@ const App = () => {
           <div className="divider"></div>
 
           <div className="nav-label">Main</div>
-          <div className={`nav-item ${activeTab === 'Dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('Dashboard')}>
+          <div className={`nav-item ${activeTab === 'Dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('Dashboard'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">📊</span>
             <span>Dashboard</span>
           </div>
           
           <div className="nav-label">Navigation</div>
-          <div className={`nav-item ${activeTab === 'Priority Feed' ? 'active' : ''}`} onClick={() => setActiveTab('Priority Feed')}>
+          <div className={`nav-item ${activeTab === 'Priority Feed' ? 'active' : ''}`} onClick={() => { setActiveTab('Priority Feed'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">🔥</span>
             <span>Priority Feed</span>
           </div>
-          <div className={`nav-item ${activeTab === 'Daily Digest' ? 'active' : ''}`} onClick={() => setActiveTab('Daily Digest')}>
+          <div className={`nav-item ${activeTab === 'Daily Digest' ? 'active' : ''}`} onClick={() => { setActiveTab('Daily Digest'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">📰</span>
             <span>Daily Digest</span>
           </div>
-          <div className={`nav-item ${activeTab === 'All Mail' ? 'active' : ''}`} onClick={() => setActiveTab('All Mail')}>
+          <div className={`nav-item ${activeTab === 'All Mail' ? 'active' : ''}`} onClick={() => { setActiveTab('All Mail'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">📥</span>
             <span>All Mail</span>
           </div>
-          <div className={`nav-item ${activeTab === 'Awaiting Reply' ? 'active' : ''}`} onClick={() => setActiveTab('Awaiting Reply')}>
+          <div className={`nav-item ${activeTab === 'Awaiting Reply' ? 'active' : ''}`} onClick={() => { setActiveTab('Awaiting Reply'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">💬</span>
             <span>Awaiting Reply</span>
           </div>
@@ -1486,7 +1545,8 @@ const App = () => {
             </main>
 
             {/* Detail Panel */}
-            <section className="detail-panel">
+            <section className={`detail-panel ${selectedMailId ? "active" : ""}`}>
+              <button className="mobile-back-btn" onClick={() => setSelectedMailId(null)}>← Back to Inbox</button>
               {selectedMail ? (
                 <div key={selectedMail.id} className="slide-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   <header className="detail-header">

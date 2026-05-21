@@ -43,21 +43,28 @@ const Landing = ({ onLogin }) => {
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
         :root {
-          --bg: #0D1117;
-          --surface: #161B22;
-          --border: #21262D;
-          --border-muted: #30363D;
+          --bg: #050505;
+          --surface: rgba(22, 27, 34, 0.6);
+          --border: rgba(255, 255, 255, 0.08);
+          --border-muted: rgba(255, 255, 255, 0.04);
           --amber: #FF9F0A;
           --teal: #32ADE6;
-          --text-primary: #E6EDF3;
-          --text-secondary: #8B949E;
+          --red: #FF2A55;
+          --text-primary: #F4F4F5;
+          --text-secondary: #A1A1AA;
+          --mesh-1: radial-gradient(at 0% 0%, rgba(94,92,230,0.15) 0px, transparent 50%);
+          --mesh-2: radial-gradient(at 100% 0%, rgba(255,42,85,0.1) 0px, transparent 50%);
+          --mesh-3: radial-gradient(at 100% 100%, rgba(255,159,10,0.12) 0px, transparent 50%);
+          --mesh-4: radial-gradient(at 0% 100%, rgba(50,173,230,0.1) 0px, transparent 50%);
           --font-main: 'DM Sans', sans-serif;
           --font-serif: 'Instrument Serif', serif;
         }
 
         html { scroll-behavior: smooth; }
         body { 
-          background-color: var(--bg); 
+          background-color: var(--bg);
+          background-image: var(--mesh-1), var(--mesh-2), var(--mesh-3), var(--mesh-4);
+          background-attachment: fixed;
           color: var(--text-primary); 
           font-family: var(--font-main);
           overflow-x: hidden;
@@ -412,6 +419,25 @@ const Landing = ({ onLogin }) => {
           .social-proof { flex-direction: column; gap: 40px; }
           nav { padding: 0 20px; }
           .nav-right .nav-link { display: none; }
+        }
+
+        @media (max-width: 768px) {
+          .hero { padding: 100px 16px 60px; min-height: auto; }
+          .hero h1 { font-size: 40px; }
+          .hero p { font-size: 16px; margin-bottom: 32px; }
+          .hero-logo { height: 48px; margin-bottom: 24px; }
+          
+          /* Hide floating cards on small screens to prevent overlap */
+          .floating-card { display: none; }
+          
+          .section-padding { padding: 60px 16px; }
+          .stat-number { font-size: 56px; }
+          .problem-grid { gap: 24px; margin-top: 40px; }
+          
+          .final-cta { padding: 80px 16px; }
+          .final-cta h2 { font-size: 36px; margin-bottom: 24px; }
+          
+          footer { flex-direction: column; gap: 16px; text-align: center; padding: 24px 16px; }
         }
         
         @media (prefers-reduced-motion: reduce) {

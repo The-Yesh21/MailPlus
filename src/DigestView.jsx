@@ -154,6 +154,25 @@ const DIGEST_CSS = `
   .digest-priority-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
   .digest-badge { padding:4px 12px; border-radius:20px; font-size:11px; font-weight:700; border:1px solid; }
   .digest-empty { text-align:center; padding:24px; color:var(--text-secondary); font-size:13px; opacity:0.7; }
+  @media (max-width: 768px) {
+    .digest-scroll { padding: 16px 16px 32px; }
+    .digest-title { font-size: 38px; }
+    .digest-masthead { padding-bottom: 12px; margin-bottom: 16px; }
+    .digest-two-col { grid-template-columns: 1fr; gap: 16px; }
+    
+    .digest-panel {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 200;
+      transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      border-left: none; background: rgba(5,5,5,0.98); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    }
+    .digest-panel.active { transform: translateY(0); }
+    
+    .chip-popover {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.97); width: 90vw; max-width: 400px;
+    }
+    .chip-popover.open { transform: translate(-50%, -50%) scale(1); }
+  }
+
 `;
 
 const getSenderColor = (name) => {
@@ -380,7 +399,7 @@ const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCoun
 
         {/* Detail panel */}
         {selMail && (
-          <div className="digest-panel">
+          <div className={`digest-panel ${selMail ? "active" : ""}`}>
             <div className="digest-panel-accent" />
             <div className="digest-panel-inner">
               <button className="digest-panel-close" onClick={() => setSel(null)}>✕ Close</button>
