@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Landing from './src/Landing';
+import DigestView from './src/DigestView';
 
 const EmailPreview = ({ html }) => {
   const iframeRef = useRef(null);
@@ -26,7 +27,7 @@ const EmailPreview = ({ html }) => {
           word-wrap: break-word;
         }
         img { max-width: 100%; height: auto; }
-        a { color: #F0A500; }
+        a { color: #FF9F0A; }
         * { max-width: 100%; box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -75,7 +76,6 @@ const useCounter = (end, duration = 1000, start = 0) => {
   return count;
 };
 
-
 // ── Live Deadline Countdown ──────────────────────────────────────────────────
 const parseDeadlineMs = (deadlineStr) => {
   if (!deadlineStr) return null;
@@ -98,6 +98,17 @@ const parseDeadlineMs = (deadlineStr) => {
     if (m) return typeof calc === 'function' ? calc(parseInt(m[1]) || 1) : calc(1);
   }
   return null;
+};
+
+// Returns a short human label for the original deadline duration e.g. "12h", "2d", "30m"
+const formatDuration = (ms) => {
+  if (!ms) return null;
+  const mins = Math.round(ms / 60000);
+  if (mins < 60)  return `${mins}m`;
+  const hrs = Math.round(ms / 3600000);
+  if (hrs < 24)   return `${hrs}h`;
+  const days = Math.round(ms / 86400000);
+  return `${days}d`;
 };
 
 const DeadlineCountdown = ({ deadline, analyzedAt, emailDate }) => {
@@ -127,21 +138,23 @@ const DeadlineCountdown = ({ deadline, analyzedAt, emailDate }) => {
     const hrs  = Math.floor(ms / 3600000);
     const mins = Math.floor((ms % 3600000) / 60000);
     const days = Math.floor(ms / 86400000);
-    const text = days >= 1 ? `${days}d ${hrs % 24}h remaining`
-               : hrs >= 1  ? `${hrs}h ${mins}m remaining`
-               :              `${mins}m remaining`;
-    const color = ms < 2 * 3600000 ? '#ff4444'
-                : ms < 6 * 3600000 ? '#F0A500'
-                : '#1aab8a';
+    const text = days >= 1 ? `${days}d ${hrs % 24}h left`
+               : hrs >= 1  ? `${hrs}h ${mins}m left`
+               :              `${mins}m left`;
+    const color = ms < 2 * 3600000 ? '#FF2A55'
+                : ms < 6 * 3600000 ? '#FF9F0A'
+                : '#32ADE6';
     return { text, color };
   };
 
+  // Can't parse the deadline string — just show raw AI text
   if (remaining === null) {
     return <div className="deadline-chip">🕒 Deadline: {deadline}</div>;
   }
 
   const { text, color } = formatRemaining(remaining);
-  const durationMs = parseDeadlineMs(deadline);
+  const durationMs   = parseDeadlineMs(deadline);
+  const originalLabel = formatDuration(durationMs);  // e.g. "12h"
   const baseTime = emailDate
     ? (typeof emailDate === 'number' ? emailDate : new Date(emailDate).getTime())
     : analyzedAt ? new Date(analyzedAt).getTime() : Date.now();
@@ -153,15 +166,21 @@ const DeadlineCountdown = ({ deadline, analyzedAt, emailDate }) => {
   return (
     <div className="deadline-chip" style={{ borderColor: color, color, background: `${color}18` }}>
       🕒 {text}
+      {originalLabel && (
+        <span style={{ opacity: 0.55, fontSize: '11px', marginLeft: '6px' }}>
+          of {originalLabel} deadline
+        </span>
+      )}
       {expiresStr && (
-        <span style={{ opacity: 0.65, fontSize: '11px', marginLeft: '6px' }}>
-          (expires {expiresStr})
+        <span style={{ opacity: 0.55, fontSize: '11px', marginLeft: '6px' }}>
+          · expires {expiresStr}
         </span>
       )}
     </div>
   );
 };
 // ─────────────────────────────────────────────────────────────────────────────
+
 
 const StatCard = ({ label, val, trend, icon, className, index }) => {
   const numVal = parseInt(String(val).replace(/,/g, '')) || 0;
@@ -189,8 +208,8 @@ const StatCard = ({ label, val, trend, icon, className, index }) => {
 
 
 const getSenderColor = (name) => {
-  if (!name) return '#7B7BF5';
-  const colors = ['#F0A500', '#1AAB8A', '#7B7BF5', '#FF6B6B', '#A06BFF', '#00D1FF'];
+  if (!name) return '#5E5CE6';
+  const colors = ['#FF9F0A', '#32ADE6', '#5E5CE6', '#FF6B6B', '#A06BFF', '#00D1FF'];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
@@ -229,255 +248,6 @@ const ErrorBoundary = ({ children }) => {
   }
   return children;
 };
-
-// ═══════════════════════════════════════════════════════════════
-// DIGEST VIEW — Newspaper / Letter Style
-// ═══════════════════════════════════════════════════════════════
-const DIGEST_CSS = `
-  .digest-root{flex:1;overflow-y:auto;padding:24px 32px;background:var(--bg);color:var(--text-primary);display:flex;gap:24px;}
-  .digest-main{flex:1;min-width:0;}
-  .digest-detail-panel{width:360px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow-y:auto;max-height:calc(100vh - 80px);position:sticky;top:0;}
-  .digest-detail-inner{padding:20px;}
-  .digest-detail-close{width:100%;background:transparent;border:1px solid var(--border-muted);color:var(--text-secondary);border-radius:8px;padding:8px;font-size:13px;cursor:pointer;margin-bottom:16px;transition:all 0.15s;}
-  .digest-detail-close:hover{background:var(--border-muted);color:var(--text-primary);}
-  .digest-masthead{text-align:center;padding:24px 0 16px;border-bottom:3px double var(--border);margin-bottom:20px;}
-  .digest-title{font-family:Georgia,'Times New Roman',serif;font-size:36px;font-weight:700;letter-spacing:-1px;background:linear-gradient(135deg,#F0A500,#fff 60%,#1AAB8A);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1;}
-  .digest-subtitle{font-size:11px;letter-spacing:4px;text-transform:uppercase;color:var(--text-secondary);margin-top:4px;}
-  .digest-date{font-size:12px;color:var(--text-secondary);margin-top:8px;border-top:1px solid var(--border-muted);padding-top:8px;}
-  .digest-stats-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px;}
-  .digest-stat-chip{padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid;}
-  .digest-section{margin-bottom:28px;}
-  .digest-section-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
-  .digest-section-line{flex:1;height:1px;background:var(--border);}
-  .digest-section-label{font-size:10px;font-weight:800;letter-spacing:3px;text-transform:uppercase;white-space:nowrap;padding:0 4px;}
-  .digest-urgent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
-  .digest-card-urgent{background:var(--surface);border:1px solid var(--border);border-left:4px solid #ff4444;border-radius:12px;padding:16px;cursor:pointer;transition:all 0.2s;}
-  .digest-card-urgent:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,68,68,0.15);}
-  .digest-card-urgent.sel{box-shadow:0 0 0 2px rgba(255,68,68,0.4);}
-  .digest-card-action{background:var(--surface);border:1px solid var(--border);border-left:4px solid #F0A500;border-radius:12px;padding:14px;cursor:pointer;transition:all 0.2s;}
-  .digest-card-action:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(240,165,0,0.12);}
-  .digest-card-action.sel{box-shadow:0 0 0 2px rgba(240,165,0,0.4);}
-  .digest-action-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;}
-  .digest-two-col{display:grid;grid-template-columns:1fr 300px;gap:24px;}
-  .digest-brief-item{display:flex;align-items:flex-start;gap:12px;padding:10px 8px;border-bottom:1px solid var(--border-muted);cursor:pointer;transition:background 0.15s;border-radius:6px;}
-  .digest-brief-item:hover,.digest-brief-item.sel{background:var(--surface);}
-  .digest-brief-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;color:#fff;}
-  .digest-brief-subject{font-size:13px;font-weight:600;color:var(--text-primary);line-height:1.3;margin-bottom:2px;}
-  .digest-brief-sender{font-size:11px;color:var(--text-secondary);}
-  .digest-brief-summary{font-size:12px;color:var(--text-secondary);margin-top:3px;line-height:1.4;}
-  .digest-fyi-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-muted);cursor:pointer;font-size:12px;transition:color 0.15s;}
-  .digest-card-sender{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-secondary);margin-bottom:4px;}
-  .digest-card-headline{font-family:Georgia,serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:8px;}
-  .digest-card-summary{font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px;}
-  .digest-card-footer{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap;}
-  .digest-empty{text-align:center;padding:20px;color:var(--text-secondary);font-size:13px;}
-`;
-
-const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail }) => {
-  const [sel, setSel] = useState(null);
-
-  const urgent   = mails.filter(m => aiResults[m.id]?.priority === 'urgent');
-  const action   = mails.filter(m => aiResults[m.id]?.requires_reply && aiResults[m.id]?.priority !== 'urgent');
-  const briefing = mails.filter(m => aiResults[m.id]?.priority === 'normal' && !aiResults[m.id]?.requires_reply);
-  const fyi      = mails.filter(m => !aiResults[m.id] || aiResults[m.id]?.priority === 'low');
-
-  const today  = new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-  const selMail = sel ? mails.find(m => m.id === sel) : null;
-  const selAi   = selMail ? aiResults[selMail.id] : null;
-  const open    = id => setSel(p => p === id ? null : id);
-
-  const Sec = ({ label, color, children }) => (
-    <div className="digest-section">
-      <div className="digest-section-header">
-        <div className="digest-section-line" />
-        <span className="digest-section-label" style={{ color }}>{label}</span>
-        <div className="digest-section-line" />
-      </div>
-      {children}
-    </div>
-  );
-
-  return (
-    <>
-      <style>{DIGEST_CSS}</style>
-      <div className="digest-root">
-        <div className="digest-main">
-
-          {/* Masthead */}
-          <div className="digest-masthead">
-            <div className="digest-title">📰 MailPulse Daily</div>
-            <div className="digest-subtitle">Your Personalized Intelligence Briefing</div>
-            <div className="digest-date">{today} &nbsp;·&nbsp; {mails.length} dispatches received</div>
-          </div>
-
-          {/* Stats bar */}
-          <div className="digest-stats-bar">
-            {[
-              { label:`🚨 ${urgent.length} Urgent`,      color:'#ff4444' },
-              { label:`✍️ ${action.length} Need Reply`,  color:'#F0A500' },
-              { label:`📋 ${briefing.length} Briefings`, color:'#7B7BF5' },
-              { label:`💡 ${fyi.length} FYI`,            color:'#1AAB8A' },
-              { label:`📩 ${mails.filter(m=>!m.is_read).length} Unread`, color:'#888' },
-            ].map((c,i) => (
-              <span key={i} className="digest-stat-chip" style={{ borderColor:c.color, color:c.color, background:`${c.color}15` }}>
-                {c.label}
-              </span>
-            ))}
-          </div>
-
-          {/* 🚨 Urgent */}
-          {urgent.length > 0 && (
-            <Sec label="🚨 Breaking — Urgent" color="#ff4444">
-              <div className="digest-urgent-grid">
-                {urgent.map(m => {
-                  const ai = aiResults[m.id];
-                  return (
-                    <div key={m.id} className={`digest-card-urgent${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
-                      <div className="digest-card-sender">{m.from_name || m.from_email}</div>
-                      <div className="digest-card-headline">{m.subject}</div>
-                      {ai?.summary && <div className="digest-card-summary">{ai.summary}</div>}
-                      <div className="digest-card-footer">
-                        {ai?.deadline && <DeadlineCountdown deadline={ai.deadline} emailDate={m.internal_date} />}
-                        {ai?.requires_reply && <span style={{color:'#F0A500'}}>↩ Reply needed</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Sec>
-          )}
-
-          {/* ✍️ Action Required */}
-          {action.length > 0 && (
-            <Sec label="✍️ Action Required" color="#F0A500">
-              <div className="digest-action-grid">
-                {action.map(m => {
-                  const ai = aiResults[m.id];
-                  return (
-                    <div key={m.id} className={`digest-card-action${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
-                      <div className="digest-card-sender">{m.from_name || m.from_email}</div>
-                      <div className="digest-card-headline" style={{fontSize:'13px'}}>{m.subject}</div>
-                      {ai?.summary && <div className="digest-card-summary">{ai.summary.split('.')[0]}.</div>}
-                      {ai?.deadline && <div style={{marginTop:'8px'}}><DeadlineCountdown deadline={ai.deadline} emailDate={m.internal_date} /></div>}
-                    </div>
-                  );
-                })}
-              </div>
-            </Sec>
-          )}
-
-          {/* Two col: Briefing + FYI */}
-          <div className="digest-two-col">
-            <Sec label="📋 Today's Briefing" color="#7B7BF5">
-              {briefing.length === 0
-                ? <div className="digest-empty">No normal-priority emails yet.<br/>Analyze emails to see them here.</div>
-                : briefing.map(m => {
-                    const ai = aiResults[m.id];
-                    const color = getSenderColor(m.from_name);
-                    const initials = (m.from_name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-                    return (
-                      <div key={m.id} className={`digest-brief-item${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
-                        <div className="digest-brief-avatar" style={{background:color}}>{initials}</div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div className="digest-brief-subject">{m.subject}</div>
-                          <div className="digest-brief-sender">{m.from_name || m.from_email}</div>
-                          {ai?.summary && <div className="digest-brief-summary">{ai.summary.split('.')[0]}.</div>}
-                        </div>
-                      </div>
-                    );
-                  })
-              }
-            </Sec>
-
-            <Sec label="💡 FYI" color="#1AAB8A">
-              {fyi.length === 0
-                ? <div className="digest-empty">Nothing here.</div>
-                : fyi.map(m => (
-                    <div key={m.id} className="digest-fyi-item"
-                      style={{ color: sel===m.id ? 'var(--amber)' : 'var(--text-secondary)' }}
-                      onClick={() => open(m.id)}>
-                      <span style={{opacity:0.4}}>·</span>
-                      <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                        <strong style={{color:'var(--text-primary)',marginRight:'4px'}}>{(m.from_name||m.from_email||'').split(' ')[0]}</strong>
-                        {m.subject}
-                      </span>
-                      <span style={{flexShrink:0,fontSize:'10px',opacity:0.5}}>{m.date?.match(/\d+:\d+/)?.[0]||''}</span>
-                    </div>
-                  ))
-              }
-            </Sec>
-          </div>
-
-        </div>{/* end digest-main */}
-
-        {/* Inline detail panel */}
-        {selMail && (
-          <div className="digest-detail-panel">
-            <div className="digest-detail-inner">
-              <button className="digest-detail-close" onClick={() => setSel(null)}>✕ Close</button>
-
-              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
-                <div style={{width:40,height:40,borderRadius:'50%',background:getSenderColor(selMail.from_name),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,color:'#fff',fontSize:'14px',flexShrink:0}}>
-                  {(selMail.from_name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
-                </div>
-                <div>
-                  <div style={{fontWeight:700,fontSize:'13px'}}>{selMail.from_name||selMail.from_email}</div>
-                  <div style={{fontSize:'11px',color:'var(--text-secondary)'}}>{selMail.from_email}</div>
-                </div>
-              </div>
-
-              <div style={{fontFamily:'Georgia,serif',fontSize:'15px',fontWeight:700,lineHeight:1.3,marginBottom:'6px'}}>{selMail.subject}</div>
-              <div style={{fontSize:'11px',color:'var(--text-secondary)',marginBottom:'14px'}}>{selMail.date}</div>
-
-              {selAi?.summary ? (
-                <div style={{background:'var(--bg)',borderRadius:'10px',padding:'12px',marginBottom:'14px'}}>
-                  <div style={{fontSize:'9px',fontWeight:800,letterSpacing:'2px',color:'var(--amber)',marginBottom:'6px'}}>✨ AI SUMMARY</div>
-                  <p style={{fontSize:'13px',lineHeight:1.6,margin:0}}>{selAi.summary}</p>
-                  {selAi.deadline && <div style={{marginTop:'8px'}}><DeadlineCountdown deadline={selAi.deadline} emailDate={selMail.internal_date} /></div>}
-                </div>
-              ) : (
-                <button onClick={() => analyzeEmail(selMail)} disabled={analyzingIds.has(selMail.id)}
-                  style={{width:'100%',padding:'10px',borderRadius:'10px',background:'var(--amber)',color:'#000',border:'none',fontWeight:700,fontSize:'13px',cursor:'pointer',marginBottom:'14px'}}>
-                  {analyzingIds.has(selMail.id) ? '⏳ Analyzing...' : '✨ Analyze this email'}
-                </button>
-              )}
-
-              <div style={{fontSize:'13px',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'14px'}}>{selMail.snippet}</div>
-
-              {selAi?.draft_reply && (
-                <div style={{background:'var(--bg)',borderRadius:'10px',padding:'12px',marginBottom:'14px'}}>
-                  <div style={{fontSize:'9px',fontWeight:800,letterSpacing:'2px',color:'var(--teal)',marginBottom:'6px'}}>✍️ DRAFT REPLY</div>
-                  <p style={{fontSize:'12px',lineHeight:1.6,margin:0,color:'var(--text-secondary)'}}>{selAi.draft_reply}</p>
-                  <button onClick={() => navigator.clipboard.writeText(selAi.draft_reply)}
-                    style={{marginTop:'10px',padding:'6px 14px',borderRadius:'8px',background:'transparent',border:'1px solid var(--border)',color:'var(--text-secondary)',fontSize:'12px',cursor:'pointer'}}>
-                    Copy
-                  </button>
-                </div>
-              )}
-
-              {selAi?.priority && (
-                <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-                  <span style={{padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,
-                    background:selAi.priority==='urgent'?'#ff444420':selAi.priority==='low'?'#1aab8a20':'#7B7BF520',
-                    color:selAi.priority==='urgent'?'#ff4444':selAi.priority==='low'?'#1aab8a':'#7B7BF5',
-                    border:'1px solid',borderColor:selAi.priority==='urgent'?'#ff4444':selAi.priority==='low'?'#1aab8a':'#7B7BF5'}}>
-                    {selAi.priority.toUpperCase()}
-                  </span>
-                  {selAi.requires_reply && (
-                    <span style={{padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,background:'#F0A50020',color:'#F0A500',border:'1px solid #F0A500'}}>
-                      REPLY NEEDED
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </>
-  );
-};
-// ═══════════════════════════════════════════════════════════════
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -824,25 +594,32 @@ const App = () => {
 
           * { box-sizing: border-box; margin: 0; padding: 0; }
           :root {
-            --bg: #0D1117;
-            --surface: #161B22;
-            --border: #21262D;
-            --border-muted: #30363D;
-            --amber: #F0A500;
-            --teal: #1AAB8A;
-            --red: #FF6B6B;
-            --text-primary: #E6EDF3;
-            --text-secondary: #8B949E;
-            --font-main: 'DM Sans', sans-serif;
+            --bg: #050505;
+            --surface: rgba(22, 27, 34, 0.6);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-muted: rgba(255, 255, 255, 0.04);
+            --amber: #FF9F0A;
+            --teal: #32ADE6;
+            --red: #FF2A55;
+            --text-primary: #F4F4F5;
+            --text-secondary: #A1A1AA;
+            --font-main: 'Inter', 'DM Sans', sans-serif;
             --font-serif: 'Instrument Serif', serif;
+            --mesh-1: radial-gradient(at 0% 0%, rgba(94,92,230,0.15) 0px, transparent 50%);
+            --mesh-2: radial-gradient(at 100% 0%, rgba(255,42,85,0.1) 0px, transparent 50%);
+            --mesh-3: radial-gradient(at 100% 100%, rgba(255,159,10,0.12) 0px, transparent 50%);
+            --mesh-4: radial-gradient(at 0% 100%, rgba(50,173,230,0.1) 0px, transparent 50%);
           }
 
           body { 
-            background-color: var(--bg); 
+            background-color: var(--bg);
+            background-image: var(--mesh-1), var(--mesh-2), var(--mesh-3), var(--mesh-4);
+            background-attachment: fixed;
             color: var(--text-primary); 
             font-family: var(--font-main);
             overflow: hidden;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
           }
 
           .fatal-error-container {
@@ -869,7 +646,9 @@ const App = () => {
           /* Sidebar */
           .sidebar {
             width: 240px;
-            background: var(--bg);
+            background: rgba(13, 17, 23, 0.4);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
@@ -939,7 +718,7 @@ const App = () => {
           /* Dashboard Styles */
           .dashboard-container {
             flex: 1;
-            background: var(--bg);
+            background: transparent;
             padding: 32px;
             overflow-y: auto;
             display: flex;
@@ -979,7 +758,7 @@ const App = () => {
           .stat-card.amber::after { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
           .stat-card.teal::after { background: var(--teal); box-shadow: 0 0 10px var(--teal); }
           .stat-card.red::after { background: var(--red); box-shadow: 0 0 10px var(--red); }
-          .stat-card.blue::after { background: #7B7BF5; box-shadow: 0 0 10px #7B7BF5; }
+          .stat-card.blue::after { background: #5E5CE6; box-shadow: 0 0 10px #5E5CE6; }
 
           .stat-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
           .stat-icon { font-size: 24px; }
@@ -1064,7 +843,7 @@ const App = () => {
           }
           .profile-top { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
           .profile-img-wrap { position: relative; width: 40px; height: 40px; }
-          .profile-img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #F0A500; object-fit: cover; }
+          .profile-img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #FF9F0A; object-fit: cover; }
           .online-dot {
             position: absolute; bottom: 2px; right: 2px;
             width: 10px; height: 10px; background: var(--teal);
@@ -1106,7 +885,9 @@ const App = () => {
           /* Mail List */
           .mail-list {
             width: 350px;
-            background: var(--bg);
+            background: rgba(13, 17, 23, 0.4);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
@@ -1210,7 +991,7 @@ const App = () => {
           }
           .badge-urgent { background: rgba(240, 165, 0, 0.15); color: var(--amber); }
           .badge-new { background: rgba(26, 171, 138, 0.15); color: var(--teal); }
-          .badge-important { background: rgba(123, 123, 245, 0.15); color: #7B7BF5; }
+          .badge-important { background: rgba(123, 123, 245, 0.15); color: #5E5CE6; }
           .badge-promo { background: rgba(139, 148, 158, 0.1); color: var(--text-secondary); }
 
           /* Detail Panel */
@@ -1354,7 +1135,7 @@ const App = () => {
           }
           .load-text {
             font-size: 14px;
-            color: #F0A500;
+            color: #FF9F0A;
             margin-bottom: 16px;
           }
 
@@ -1408,7 +1189,7 @@ const App = () => {
                   />
                 ) : (
                   <div className="profile-img" style={{ 
-                    background: '#F0A500', 
+                    background: '#FF9F0A', 
                     color: '#0D1117', 
                     fontWeight: 600, 
                     fontSize: '16px', 
@@ -1632,8 +1413,10 @@ const App = () => {
             aiResults={aiResults}
             analyzingIds={analyzingIds}
             analyzeEmail={analyzeEmail}
+            DeadlineCountdown={DeadlineCountdown}
           />
         )}
+
 
         {/* ── Mail List + Detail ── */}
         {(activeTab !== 'Dashboard' && activeTab !== 'Daily Digest') && (
@@ -1740,9 +1523,27 @@ const App = () => {
                           aiData.summary !== 'null' && aiData.summary.length > 10
 
                         if (hasSummary) {
+                          // Detect if the summary text mentions a time window (stale) while a live countdown is also shown
+                          const summaryHasTimeRef = aiData.deadline &&
+                            /\d+\s*(hour|day|minute|week|hr)/i.test(aiData.summary);
+
                           return (
                             <>
                               <p className="summary-text">{aiData.summary}</p>
+                              {summaryHasTimeRef && (
+                                <p style={{
+                                  fontSize: '11px',
+                                  color: 'var(--text-secondary)',
+                                  opacity: 0.6,
+                                  margin: '4px 0 8px',
+                                  fontStyle: 'italic',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}>
+                                  ↑ Time in summary is from the original email — live countdown below
+                                </p>
+                              )}
                               {aiData.deadline && (
                                 <DeadlineCountdown
                                   deadline={aiData.deadline}

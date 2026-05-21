@@ -47,8 +47,8 @@ const Landing = ({ onLogin }) => {
           --surface: #161B22;
           --border: #21262D;
           --border-muted: #30363D;
-          --amber: #F0A500;
-          --teal: #1AAB8A;
+          --amber: #FF9F0A;
+          --teal: #32ADE6;
           --text-primary: #E6EDF3;
           --text-secondary: #8B949E;
           --font-main: 'DM Sans', sans-serif;
@@ -149,7 +149,7 @@ const Landing = ({ onLogin }) => {
         }
 
         .gradient-text {
-          background: linear-gradient(90deg, #F0A500, #1AAB8A, #F0A500);
+          background: linear-gradient(90deg, #FF9F0A, #32ADE6, #FF9F0A);
           background-size: 200% auto;
           animation: gradientShift 3s linear infinite;
           -webkit-background-clip: text;
@@ -433,7 +433,7 @@ const Landing = ({ onLogin }) => {
       <section className="hero">
         <div className="floating-card fc-1">
           <div className="card-header">
-            <div className="avatar-circle" style={{ background: '#F0A500' }}></div>
+            <div className="avatar-circle" style={{ background: '#FF9F0A' }}></div>
             <span className="sender-name">Sarah Chen</span>
             <span className="card-time">9:41 AM</span>
           </div>
@@ -442,7 +442,7 @@ const Landing = ({ onLogin }) => {
         </div>
         <div className="floating-card fc-2">
           <div className="card-header">
-            <div className="avatar-circle" style={{ background: '#1AAB8A' }}></div>
+            <div className="avatar-circle" style={{ background: '#32ADE6' }}></div>
             <span className="sender-name">Alex Rivet</span>
             <span className="card-time">10:15 AM</span>
           </div>
@@ -451,7 +451,7 @@ const Landing = ({ onLogin }) => {
         </div>
         <div className="floating-card fc-3">
           <div className="card-header">
-            <div className="avatar-circle" style={{ background: '#7B7BF5' }}></div>
+            <div className="avatar-circle" style={{ background: '#5E5CE6' }}></div>
             <span className="sender-name">Product Hunt</span>
             <span className="card-time">Yesterday</span>
           </div>
