@@ -9,3 +9,6 @@ python-jose[cryptography]
 httpx
 groq
 firebase-admin
+
+gTTS
+aiofiles

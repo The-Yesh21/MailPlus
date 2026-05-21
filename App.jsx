@@ -257,6 +257,8 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isPlayingBriefing, setIsPlayingBriefing] = useState(false);
+  const [briefingAudioUrl, setBriefingAudioUrl] = useState(null);
+  const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [activeTab, setActiveTab] = useState('Priority Feed');
   const [fullBodies, setFullBodies] = useState({});
@@ -399,6 +401,40 @@ const App = () => {
       emails_this_week: weekMails || dashboardStats.emails_this_week || 0
     };
   }, [mails, dashboardStats]);
+
+  const generateAndSendBriefing = async () => {
+    setIsGeneratingBriefing(true);
+    try {
+      const urgentEmails = mails
+        .filter(m => aiResults[m.id]?.priority === 'urgent' || aiResults[m.id]?.priority === 'high')
+        .map(m => ({ subject: m.subject, summary: aiResults[m.id]?.summary || m.snippet }));
+      
+      const payload = urgentEmails.length > 0 ? urgentEmails : mails.slice(0, 5).map(m => ({ subject: m.subject, summary: aiResults[m.id]?.summary || m.snippet }));
+
+      const token = localStorage.getItem('mp_token');
+      const res = await fetch(`${API_BASE}/ai/generate-morning-briefing`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ emails: payload })
+      });
+      
+      if (!res.ok) throw new Error("Failed to generate briefing");
+      const data = await res.json();
+      setBriefingAudioUrl(data.url);
+      
+      const message = encodeURIComponent(`🎙️ *MailPulse Morning Briefing*\n\nHere is your AI audio briefing for today:\n${data.url}\n\nScript:\n${data.script}`);
+      window.open(`https://wa.me/?text=${message}`, '_blank');
+      
+      setStatsData(prev => ({ ...prev, voice_briefings_sent: (prev.voice_briefings_sent || 0) + 1 }));
+    } catch (error) {
+      console.error("Briefing error:", error);
+    } finally {
+      setIsGeneratingBriefing(false);
+    }
+  };
 
   const handleLogin = async () => {
     try {
@@ -1726,12 +1762,18 @@ const App = () => {
 
                 {/* Voice Briefing Bar */}
                 <div className="voice-bar">
-                  <div className="play-circle" onClick={() => setIsPlayingBriefing(!isPlayingBriefing)}>
+                  <div className="play-circle" onClick={() => {
+                    if (briefingAudioUrl) {
+                      const audio = new Audio(briefingAudioUrl);
+                      audio.play();
+                    }
+                    setIsPlayingBriefing(!isPlayingBriefing)
+                  }}>
                     {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
                   </div>
                   <div className="briefing-meta">
-                    <span className="briefing-title">Morning briefing ready</span>
-                    <span className="briefing-sub">47s · Tap to play</span>
+                    <span className="briefing-title">Morning briefing</span>
+                    <span className="briefing-sub">Tap Send to generate</span>
                   </div>
                   <div className="waveform">
                     {[...Array(24)].map((_, i) => (
@@ -1745,8 +1787,9 @@ const App = () => {
                       ></div>
                     ))}
                   </div>
-                  <button className="whatsapp-btn">
-                    <span>✉</span> Send to WhatsApp
+                  <button className="whatsapp-btn" onClick={generateAndSendBriefing} disabled={isGeneratingBriefing} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                    {isGeneratingBriefing ? <div className="spinner" style={{width:'14px',height:'14px',borderWidth:'2px'}}></div> : <span>✉</span>}
+                    {isGeneratingBriefing ? "Generating..." : "Send to WhatsApp"}
                   </button>
                 </div>
               </div>

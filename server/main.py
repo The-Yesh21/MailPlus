@@ -11,6 +11,10 @@ import html
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, Query
+from fastapi.staticfiles import StaticFiles
+from gtts import gTTS
+import uuid
+import aiofiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
@@ -31,6 +35,9 @@ fs = fb_firestore.client()
 
 # ── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI()
+import os
+os.makedirs("audio", exist_ok=True)
+app.mount("/audio", StaticFiles(directory="audio"), name="audio")
 
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -265,6 +272,49 @@ def analyze_email_hf(from_name, subject, body_preview):
     }
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.post("/ai/generate-morning-briefing")
+async def generate_morning_briefing(request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    emails = body.get("emails", [])
+    if not emails:
+        raise HTTPException(status_code=400, detail="No emails provided")
+        
+    # Build prompt from emails
+    summaries_text = "\n".join([f"- {e.get('subject', '')}: {e.get('summary', '')}" for e in emails[:5]])
+    
+    prompt = f"""You are a highly motivating, energetic AI assistant. Write a short, powerful morning audio briefing script (max 3-4 sentences) summarizing these emails. 
+Start with an encouraging morning greeting, summarize the key urgent things to do today, and end on a high note. 
+Do not use emojis or markdown, this will be read by a Text-to-Speech engine. Make it sound natural and spoken.
+Emails:
+{summaries_text}
+"""
+    
+    loop = asyncio.get_event_loop()
+    # Use the existing Groq engine to generate the spoken script
+    script = await loop.run_in_executor(
+        None,
+        partial(call_groq, prompt, "You are an expert audio scriptwriter.", 300)
+    )
+    
+    if not script:
+        script = "Good morning! You have a few important updates to check in your inbox today. Have a great day!"
+        
+    # Generate TTS
+    filename = f"{uuid.uuid4().hex}.mp3"
+    filepath = os.path.join("audio", filename)
+    
+    tts = gTTS(text=script, lang='en', tld='com')
+    # Save the file (blocking call run in executor)
+    await loop.run_in_executor(None, tts.save, filepath)
+    
+    # Return the URL
+    frontend_url = request.base_url
+    # Ensure it uses the server host/port, though request.base_url usually does
+    audio_url = f"{frontend_url}audio/{filename}"
+    
+    return {"url": audio_url, "script": script}
+
 
 @app.get("/health")
 def health():
