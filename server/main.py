@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS
+import numpy as np
+import soundfile as sf
+import io
+from kokoro import KPipeline
 import uuid
 import aiofiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +28,17 @@ import firebase_admin
 from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
 
 load_dotenv()
+
+kokoro_pipeline = None
+
+def get_kokoro_pipeline():
+    global kokoro_pipeline
+    if kokoro_pipeline is None:
+        print("Loading Kokoro TTS pipeline...")
+        kokoro_pipeline = KPipeline(lang_code='a')
+        print("Kokoro TTS ready!")
+    return kokoro_pipeline
+
 
 # ── Firebase / Firestore ────────────────────────────────────────────────────
 _firebase_cred_path = os.getenv("FIREBASE_CREDENTIALS", "./serviceAccountKey.json")
@@ -301,12 +315,30 @@ Emails:
         script = "Good morning! You have a few important updates to check in your inbox today. Have a great day!"
         
     # Generate TTS
-    filename = f"{uuid.uuid4().hex}.mp3"
+    filename = f"{uuid.uuid4().hex}.wav"
     filepath = os.path.join("audio", filename)
     
-    tts = gTTS(text=script, lang='en', tld='com')
+    def generate_kokoro_audio(script_text, out_path):
+        try:
+            pipeline = get_kokoro_pipeline()
+            generator = pipeline(script_text, voice='af_sarah', speed=1.0)
+            
+            audio_chunks = []
+            for i, (gs, ps, audio) in enumerate(generator):
+                audio_chunks.append(audio)
+            
+            if not audio_chunks:
+                print("No audio chunks generated")
+                return
+            
+            full_audio = np.concatenate(audio_chunks)
+            sf.write(out_path, full_audio, 24000, format='WAV')
+            print(f"Generated kokoro audio to {out_path}")
+        except Exception as e:
+            print(f"Kokoro TTS error: {e}")
+
     # Save the file (blocking call run in executor)
-    await loop.run_in_executor(None, tts.save, filepath)
+    await loop.run_in_executor(None, generate_kokoro_audio, script, filepath)
     
     # Return the URL
     frontend_url = request.base_url

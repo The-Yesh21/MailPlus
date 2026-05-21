@@ -10,5 +10,8 @@ httpx
 groq
 firebase-admin
 
-gTTS
 aiofiles
+
+kokoro
+soundfile
+numpy
