@@ -75,10 +75,98 @@ const useCounter = (end, duration = 1000, start = 0) => {
   return count;
 };
 
+
+// ── Live Deadline Countdown ──────────────────────────────────────────────────
+const parseDeadlineMs = (deadlineStr) => {
+  if (!deadlineStr) return null;
+  const s = deadlineStr.toLowerCase();
+  const map = [
+    [/(\d+)\s*hour/,   h => h * 3600000],
+    [/(\d+)\s*day/,    d => d * 86400000],
+    [/(\d+)\s*minute/, m => m * 60000],
+    [/(\d+)\s*week/,   w => w * 604800000],
+    [/end of (today|day)/, () => {
+      const eod = new Date(); eod.setHours(23, 59, 59, 0); return eod.getTime() - Date.now();
+    }],
+    [/tomorrow/, () => 86400000],
+    [/tonight/,  () => {
+      const midnight = new Date(); midnight.setHours(23, 59, 0, 0); return midnight.getTime() - Date.now();
+    }],
+  ];
+  for (const [pattern, calc] of map) {
+    const m = s.match(pattern);
+    if (m) return typeof calc === 'function' ? calc(parseInt(m[1]) || 1) : calc(1);
+  }
+  return null;
+};
+
+const DeadlineCountdown = ({ deadline, analyzedAt, emailDate }) => {
+  const [remaining, setRemaining] = useState(null);
+
+  useEffect(() => {
+    if (!deadline) return;
+    const durationMs = parseDeadlineMs(deadline);
+    if (!durationMs) return;
+
+    // Use email received time first (most accurate), then analyzed_at, then now
+    const baseTime = emailDate
+      ? (typeof emailDate === 'number' ? emailDate : new Date(emailDate).getTime())
+      : analyzedAt
+        ? new Date(analyzedAt).getTime()
+        : Date.now();
+
+    const expiresAt = baseTime + durationMs;
+    const update = () => setRemaining(expiresAt - Date.now());
+    update();
+    const timer = setInterval(update, 60000);
+    return () => clearInterval(timer);
+  }, [deadline, analyzedAt, emailDate]);
+
+  const formatRemaining = (ms) => {
+    if (ms <= 0) return { text: 'Deadline passed', color: '#8b0000' };
+    const hrs  = Math.floor(ms / 3600000);
+    const mins = Math.floor((ms % 3600000) / 60000);
+    const days = Math.floor(ms / 86400000);
+    const text = days >= 1 ? `${days}d ${hrs % 24}h remaining`
+               : hrs >= 1  ? `${hrs}h ${mins}m remaining`
+               :              `${mins}m remaining`;
+    const color = ms < 2 * 3600000 ? '#ff4444'
+                : ms < 6 * 3600000 ? '#F0A500'
+                : '#1aab8a';
+    return { text, color };
+  };
+
+  if (remaining === null) {
+    return <div className="deadline-chip">🕒 Deadline: {deadline}</div>;
+  }
+
+  const { text, color } = formatRemaining(remaining);
+  const durationMs = parseDeadlineMs(deadline);
+  const baseTime = emailDate
+    ? (typeof emailDate === 'number' ? emailDate : new Date(emailDate).getTime())
+    : analyzedAt ? new Date(analyzedAt).getTime() : Date.now();
+  const expiresAt  = durationMs ? new Date(baseTime + durationMs) : null;
+  const expiresStr = expiresAt
+    ? expiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  return (
+    <div className="deadline-chip" style={{ borderColor: color, color, background: `${color}18` }}>
+      🕒 {text}
+      {expiresStr && (
+        <span style={{ opacity: 0.65, fontSize: '11px', marginLeft: '6px' }}>
+          (expires {expiresStr})
+        </span>
+      )}
+    </div>
+  );
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 const StatCard = ({ label, val, trend, icon, className, index }) => {
-  const numVal = parseInt(val.replace(/,/g, ''));
+  const numVal = parseInt(String(val).replace(/,/g, '')) || 0;
   const animatedVal = useCounter(numVal, 1500 + index * 200);
-  const displayVal = val.includes('.') ? animatedVal.toFixed(1) : animatedVal.toLocaleString();
+  const displayVal = animatedVal.toLocaleString();
 
   return (
     <div className={`stat-card ${className}`}>
@@ -86,11 +174,11 @@ const StatCard = ({ label, val, trend, icon, className, index }) => {
         <span className="stat-icon">{icon}</span>
         <span className={`stat-trend ${index === 0 ? 'trend-up' : 'trend-neutral'}`}>{trend}</span>
       </div>
-      <div className="stat-value">{displayVal}{val.includes('hrs') ? ' hrs' : ''}</div>
+      <div className="stat-value">{displayVal}</div>
       <div className="stat-label">{label}</div>
       <svg className="sparkline" viewBox="0 0 100 30">
-        <path 
-          d={`M0,25 Q15,${20-index*2} 30,22 T60,${15+index} T100,${10+index*3}`} 
+        <path
+          d={`M0,25 Q15,${20-index*2} 30,22 T60,${15+index} T100,${10+index*3}`}
           fill="none" stroke="currentColor" strokeWidth="2"
           style={{ opacity: 0.3, color: index === 0 ? 'var(--amber)' : (index === 1 ? 'var(--teal)' : 'inherit') }}
         />
@@ -98,6 +186,7 @@ const StatCard = ({ label, val, trend, icon, className, index }) => {
     </div>
   );
 };
+
 
 const getSenderColor = (name) => {
   if (!name) return '#7B7BF5';
@@ -141,15 +230,265 @@ const ErrorBoundary = ({ children }) => {
   return children;
 };
 
+// ═══════════════════════════════════════════════════════════════
+// DIGEST VIEW — Newspaper / Letter Style
+// ═══════════════════════════════════════════════════════════════
+const DIGEST_CSS = `
+  .digest-root{flex:1;overflow-y:auto;padding:24px 32px;background:var(--bg);color:var(--text-primary);display:flex;gap:24px;}
+  .digest-main{flex:1;min-width:0;}
+  .digest-detail-panel{width:360px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow-y:auto;max-height:calc(100vh - 80px);position:sticky;top:0;}
+  .digest-detail-inner{padding:20px;}
+  .digest-detail-close{width:100%;background:transparent;border:1px solid var(--border-muted);color:var(--text-secondary);border-radius:8px;padding:8px;font-size:13px;cursor:pointer;margin-bottom:16px;transition:all 0.15s;}
+  .digest-detail-close:hover{background:var(--border-muted);color:var(--text-primary);}
+  .digest-masthead{text-align:center;padding:24px 0 16px;border-bottom:3px double var(--border);margin-bottom:20px;}
+  .digest-title{font-family:Georgia,'Times New Roman',serif;font-size:36px;font-weight:700;letter-spacing:-1px;background:linear-gradient(135deg,#F0A500,#fff 60%,#1AAB8A);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1;}
+  .digest-subtitle{font-size:11px;letter-spacing:4px;text-transform:uppercase;color:var(--text-secondary);margin-top:4px;}
+  .digest-date{font-size:12px;color:var(--text-secondary);margin-top:8px;border-top:1px solid var(--border-muted);padding-top:8px;}
+  .digest-stats-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px;}
+  .digest-stat-chip{padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid;}
+  .digest-section{margin-bottom:28px;}
+  .digest-section-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .digest-section-line{flex:1;height:1px;background:var(--border);}
+  .digest-section-label{font-size:10px;font-weight:800;letter-spacing:3px;text-transform:uppercase;white-space:nowrap;padding:0 4px;}
+  .digest-urgent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+  .digest-card-urgent{background:var(--surface);border:1px solid var(--border);border-left:4px solid #ff4444;border-radius:12px;padding:16px;cursor:pointer;transition:all 0.2s;}
+  .digest-card-urgent:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,68,68,0.15);}
+  .digest-card-urgent.sel{box-shadow:0 0 0 2px rgba(255,68,68,0.4);}
+  .digest-card-action{background:var(--surface);border:1px solid var(--border);border-left:4px solid #F0A500;border-radius:12px;padding:14px;cursor:pointer;transition:all 0.2s;}
+  .digest-card-action:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(240,165,0,0.12);}
+  .digest-card-action.sel{box-shadow:0 0 0 2px rgba(240,165,0,0.4);}
+  .digest-action-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;}
+  .digest-two-col{display:grid;grid-template-columns:1fr 300px;gap:24px;}
+  .digest-brief-item{display:flex;align-items:flex-start;gap:12px;padding:10px 8px;border-bottom:1px solid var(--border-muted);cursor:pointer;transition:background 0.15s;border-radius:6px;}
+  .digest-brief-item:hover,.digest-brief-item.sel{background:var(--surface);}
+  .digest-brief-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;color:#fff;}
+  .digest-brief-subject{font-size:13px;font-weight:600;color:var(--text-primary);line-height:1.3;margin-bottom:2px;}
+  .digest-brief-sender{font-size:11px;color:var(--text-secondary);}
+  .digest-brief-summary{font-size:12px;color:var(--text-secondary);margin-top:3px;line-height:1.4;}
+  .digest-fyi-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-muted);cursor:pointer;font-size:12px;transition:color 0.15s;}
+  .digest-card-sender{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-secondary);margin-bottom:4px;}
+  .digest-card-headline{font-family:Georgia,serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:8px;}
+  .digest-card-summary{font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px;}
+  .digest-card-footer{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap;}
+  .digest-empty{text-align:center;padding:20px;color:var(--text-secondary);font-size:13px;}
+`;
+
+const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail }) => {
+  const [sel, setSel] = useState(null);
+
+  const urgent   = mails.filter(m => aiResults[m.id]?.priority === 'urgent');
+  const action   = mails.filter(m => aiResults[m.id]?.requires_reply && aiResults[m.id]?.priority !== 'urgent');
+  const briefing = mails.filter(m => aiResults[m.id]?.priority === 'normal' && !aiResults[m.id]?.requires_reply);
+  const fyi      = mails.filter(m => !aiResults[m.id] || aiResults[m.id]?.priority === 'low');
+
+  const today  = new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  const selMail = sel ? mails.find(m => m.id === sel) : null;
+  const selAi   = selMail ? aiResults[selMail.id] : null;
+  const open    = id => setSel(p => p === id ? null : id);
+
+  const Sec = ({ label, color, children }) => (
+    <div className="digest-section">
+      <div className="digest-section-header">
+        <div className="digest-section-line" />
+        <span className="digest-section-label" style={{ color }}>{label}</span>
+        <div className="digest-section-line" />
+      </div>
+      {children}
+    </div>
+  );
+
+  return (
+    <>
+      <style>{DIGEST_CSS}</style>
+      <div className="digest-root">
+        <div className="digest-main">
+
+          {/* Masthead */}
+          <div className="digest-masthead">
+            <div className="digest-title">📰 MailPulse Daily</div>
+            <div className="digest-subtitle">Your Personalized Intelligence Briefing</div>
+            <div className="digest-date">{today} &nbsp;·&nbsp; {mails.length} dispatches received</div>
+          </div>
+
+          {/* Stats bar */}
+          <div className="digest-stats-bar">
+            {[
+              { label:`🚨 ${urgent.length} Urgent`,      color:'#ff4444' },
+              { label:`✍️ ${action.length} Need Reply`,  color:'#F0A500' },
+              { label:`📋 ${briefing.length} Briefings`, color:'#7B7BF5' },
+              { label:`💡 ${fyi.length} FYI`,            color:'#1AAB8A' },
+              { label:`📩 ${mails.filter(m=>!m.is_read).length} Unread`, color:'#888' },
+            ].map((c,i) => (
+              <span key={i} className="digest-stat-chip" style={{ borderColor:c.color, color:c.color, background:`${c.color}15` }}>
+                {c.label}
+              </span>
+            ))}
+          </div>
+
+          {/* 🚨 Urgent */}
+          {urgent.length > 0 && (
+            <Sec label="🚨 Breaking — Urgent" color="#ff4444">
+              <div className="digest-urgent-grid">
+                {urgent.map(m => {
+                  const ai = aiResults[m.id];
+                  return (
+                    <div key={m.id} className={`digest-card-urgent${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
+                      <div className="digest-card-sender">{m.from_name || m.from_email}</div>
+                      <div className="digest-card-headline">{m.subject}</div>
+                      {ai?.summary && <div className="digest-card-summary">{ai.summary}</div>}
+                      <div className="digest-card-footer">
+                        {ai?.deadline && <DeadlineCountdown deadline={ai.deadline} emailDate={m.internal_date} />}
+                        {ai?.requires_reply && <span style={{color:'#F0A500'}}>↩ Reply needed</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Sec>
+          )}
+
+          {/* ✍️ Action Required */}
+          {action.length > 0 && (
+            <Sec label="✍️ Action Required" color="#F0A500">
+              <div className="digest-action-grid">
+                {action.map(m => {
+                  const ai = aiResults[m.id];
+                  return (
+                    <div key={m.id} className={`digest-card-action${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
+                      <div className="digest-card-sender">{m.from_name || m.from_email}</div>
+                      <div className="digest-card-headline" style={{fontSize:'13px'}}>{m.subject}</div>
+                      {ai?.summary && <div className="digest-card-summary">{ai.summary.split('.')[0]}.</div>}
+                      {ai?.deadline && <div style={{marginTop:'8px'}}><DeadlineCountdown deadline={ai.deadline} emailDate={m.internal_date} /></div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </Sec>
+          )}
+
+          {/* Two col: Briefing + FYI */}
+          <div className="digest-two-col">
+            <Sec label="📋 Today's Briefing" color="#7B7BF5">
+              {briefing.length === 0
+                ? <div className="digest-empty">No normal-priority emails yet.<br/>Analyze emails to see them here.</div>
+                : briefing.map(m => {
+                    const ai = aiResults[m.id];
+                    const color = getSenderColor(m.from_name);
+                    const initials = (m.from_name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+                    return (
+                      <div key={m.id} className={`digest-brief-item${sel===m.id?' sel':''}`} onClick={() => open(m.id)}>
+                        <div className="digest-brief-avatar" style={{background:color}}>{initials}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div className="digest-brief-subject">{m.subject}</div>
+                          <div className="digest-brief-sender">{m.from_name || m.from_email}</div>
+                          {ai?.summary && <div className="digest-brief-summary">{ai.summary.split('.')[0]}.</div>}
+                        </div>
+                      </div>
+                    );
+                  })
+              }
+            </Sec>
+
+            <Sec label="💡 FYI" color="#1AAB8A">
+              {fyi.length === 0
+                ? <div className="digest-empty">Nothing here.</div>
+                : fyi.map(m => (
+                    <div key={m.id} className="digest-fyi-item"
+                      style={{ color: sel===m.id ? 'var(--amber)' : 'var(--text-secondary)' }}
+                      onClick={() => open(m.id)}>
+                      <span style={{opacity:0.4}}>·</span>
+                      <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        <strong style={{color:'var(--text-primary)',marginRight:'4px'}}>{(m.from_name||m.from_email||'').split(' ')[0]}</strong>
+                        {m.subject}
+                      </span>
+                      <span style={{flexShrink:0,fontSize:'10px',opacity:0.5}}>{m.date?.match(/\d+:\d+/)?.[0]||''}</span>
+                    </div>
+                  ))
+              }
+            </Sec>
+          </div>
+
+        </div>{/* end digest-main */}
+
+        {/* Inline detail panel */}
+        {selMail && (
+          <div className="digest-detail-panel">
+            <div className="digest-detail-inner">
+              <button className="digest-detail-close" onClick={() => setSel(null)}>✕ Close</button>
+
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
+                <div style={{width:40,height:40,borderRadius:'50%',background:getSenderColor(selMail.from_name),display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,color:'#fff',fontSize:'14px',flexShrink:0}}>
+                  {(selMail.from_name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:'13px'}}>{selMail.from_name||selMail.from_email}</div>
+                  <div style={{fontSize:'11px',color:'var(--text-secondary)'}}>{selMail.from_email}</div>
+                </div>
+              </div>
+
+              <div style={{fontFamily:'Georgia,serif',fontSize:'15px',fontWeight:700,lineHeight:1.3,marginBottom:'6px'}}>{selMail.subject}</div>
+              <div style={{fontSize:'11px',color:'var(--text-secondary)',marginBottom:'14px'}}>{selMail.date}</div>
+
+              {selAi?.summary ? (
+                <div style={{background:'var(--bg)',borderRadius:'10px',padding:'12px',marginBottom:'14px'}}>
+                  <div style={{fontSize:'9px',fontWeight:800,letterSpacing:'2px',color:'var(--amber)',marginBottom:'6px'}}>✨ AI SUMMARY</div>
+                  <p style={{fontSize:'13px',lineHeight:1.6,margin:0}}>{selAi.summary}</p>
+                  {selAi.deadline && <div style={{marginTop:'8px'}}><DeadlineCountdown deadline={selAi.deadline} emailDate={selMail.internal_date} /></div>}
+                </div>
+              ) : (
+                <button onClick={() => analyzeEmail(selMail)} disabled={analyzingIds.has(selMail.id)}
+                  style={{width:'100%',padding:'10px',borderRadius:'10px',background:'var(--amber)',color:'#000',border:'none',fontWeight:700,fontSize:'13px',cursor:'pointer',marginBottom:'14px'}}>
+                  {analyzingIds.has(selMail.id) ? '⏳ Analyzing...' : '✨ Analyze this email'}
+                </button>
+              )}
+
+              <div style={{fontSize:'13px',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'14px'}}>{selMail.snippet}</div>
+
+              {selAi?.draft_reply && (
+                <div style={{background:'var(--bg)',borderRadius:'10px',padding:'12px',marginBottom:'14px'}}>
+                  <div style={{fontSize:'9px',fontWeight:800,letterSpacing:'2px',color:'var(--teal)',marginBottom:'6px'}}>✍️ DRAFT REPLY</div>
+                  <p style={{fontSize:'12px',lineHeight:1.6,margin:0,color:'var(--text-secondary)'}}>{selAi.draft_reply}</p>
+                  <button onClick={() => navigator.clipboard.writeText(selAi.draft_reply)}
+                    style={{marginTop:'10px',padding:'6px 14px',borderRadius:'8px',background:'transparent',border:'1px solid var(--border)',color:'var(--text-secondary)',fontSize:'12px',cursor:'pointer'}}>
+                    Copy
+                  </button>
+                </div>
+              )}
+
+              {selAi?.priority && (
+                <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+                  <span style={{padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,
+                    background:selAi.priority==='urgent'?'#ff444420':selAi.priority==='low'?'#1aab8a20':'#7B7BF520',
+                    color:selAi.priority==='urgent'?'#ff4444':selAi.priority==='low'?'#1aab8a':'#7B7BF5',
+                    border:'1px solid',borderColor:selAi.priority==='urgent'?'#ff4444':selAi.priority==='low'?'#1aab8a':'#7B7BF5'}}>
+                    {selAi.priority.toUpperCase()}
+                  </span>
+                  {selAi.requires_reply && (
+                    <span style={{padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,background:'#F0A50020',color:'#F0A500',border:'1px solid #F0A500'}}>
+                      REPLY NEEDED
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
+// ═══════════════════════════════════════════════════════════════
+
 const App = () => {
   const [user, setUser] = useState(null);
+
   const [mails, setMails] = useState([]);
   const [selectedMailId, setSelectedMailId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isPlayingBriefing, setIsPlayingBriefing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
-  const [activeTab, setActiveTab] = useState('All Mail');
+  const [activeTab, setActiveTab] = useState('Priority Feed');
   const [fullBodies, setFullBodies] = useState({});
   const [isFetchingBody, setIsFetchingBody] = useState(false);
   const [aiResults, setAiResults] = useState({});
@@ -220,20 +559,12 @@ const App = () => {
     const token = localStorage.getItem('mp_token');
     if (!token || !user) return;
 
-    let afterParam = "";
-    if (mails && Array.isArray(mails) && mails.length > 0) {
-      const maxDate = Math.max(...mails.map(m => m.internal_date || 0));
-      if (maxDate > 0) {
-        afterParam = `?after=${maxDate}`;
-      }
-    }
-
     if (!mails || (Array.isArray(mails) && mails.length === 0)) setIsLoading(true);
     setGlobalError(null);
     
     try {
       const startTime = Date.now();
-      const response = await fetch(`${API_BASE}/emails${afterParam}`, {
+      const response = await fetch(`${API_BASE}/emails`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -283,6 +614,20 @@ const App = () => {
       setIsTransitioning(false);
     }
   };
+
+  const dashboardDynamic = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const weekStart = todayStart - (7 * 24 * 60 * 60 * 1000);
+    
+    const todayMails = mails.filter(m => (m.internal_date || 0) >= todayStart).length;
+    const weekMails = mails.filter(m => (m.internal_date || 0) >= weekStart).length;
+    
+    return {
+      emails_today: todayMails || dashboardStats.emails_today || 0,
+      emails_this_week: weekMails || dashboardStats.emails_this_week || 0
+    };
+  }, [mails, dashboardStats]);
 
   const handleLogin = async () => {
     try {
@@ -358,20 +703,9 @@ const App = () => {
       if (!response.ok) throw new Error("AI analysis failed");
       const data = await response.json();
       console.log("Single AI analysis result:", data);
-      
       setAiResults(prev => ({ ...prev, [emailId]: data }));
-
-      // Update stats locally
-      const isUrgent = data.priority === 'urgent';
-      const hasReply = data.draft_reply && !data.draft_reply.includes('unavailable');
-
-      setStatsData(prev => ({
-        emails_analyzed: prev.emails_analyzed + 1,
-        urgent_emails_caught: prev.urgent_emails_caught + (isUrgent ? 1 : 0),
-        replies_drafted: prev.replies_drafted + (hasReply ? 1 : 0),
-        voice_briefings_sent: prev.voice_briefings_sent
-      }));
-
+      // Refresh stats from Firestore via backend
+      fetchDashboardStats();
       return data;
     } catch (error) {
       console.error("Failed to analyze email:", error);
@@ -407,20 +741,8 @@ const App = () => {
         setAiResults(prev => ({ ...prev, ...batchData.results }))
         console.log("AI results set:", Object.keys(batchData.results))
       }
-
-      if (batchData && batchData.results) {
-        // Update stats locally
-        const results = Object.values(batchData.results || {});
-        const urgentCount = results.filter(r => r.priority === 'urgent').length;
-        const repliesCount = results.filter(r => r.draft_reply && !r.draft_reply.includes('unavailable')).length;
-
-        setStatsData(prev => ({
-          emails_analyzed: prev.emails_analyzed + results.length,
-          urgent_emails_caught: prev.urgent_emails_caught + urgentCount,
-          replies_drafted: prev.replies_drafted + repliesCount,
-          voice_briefings_sent: prev.voice_briefings_sent
-        }));
-      }
+      // Refresh stats from Firestore via backend
+      fetchDashboardStats();
     } catch (error) {
       console.error("Failed to analyze batch:", error);
     } finally {
@@ -1135,6 +1457,10 @@ const App = () => {
             <span className="nav-icon">🔥</span>
             <span>Priority Feed</span>
           </div>
+          <div className={`nav-item ${activeTab === 'Daily Digest' ? 'active' : ''}`} onClick={() => setActiveTab('Daily Digest')}>
+            <span className="nav-icon">📰</span>
+            <span>Daily Digest</span>
+          </div>
           <div className={`nav-item ${activeTab === 'All Mail' ? 'active' : ''}`} onClick={() => setActiveTab('All Mail')}>
             <span className="nav-icon">📥</span>
             <span>All Mail</span>
@@ -1149,8 +1475,8 @@ const App = () => {
           </div>
         </aside>
 
-        {/* Main Content Area */}
-        {activeTab === 'Dashboard' ? (
+        {/* ── Dashboard ── */}
+        {activeTab === 'Dashboard' && (
           <div className="dashboard-container">
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div>
@@ -1168,10 +1494,10 @@ const App = () => {
 
             <div className="analytics-grid">
               {[
-                { label: 'Emails Summarized', val: dashboardStats?.total_emails?.toLocaleString() || '0', trend: `${dashboardStats?.emails_this_week || 0} this week`, icon: '✨', class: 'amber' },
-                { label: 'Voice Briefings Ready', val: ((dashboardStats?.emails_today || 0) + (dashboardStats?.unread_emails || 0)).toLocaleString(), trend: 'Daily Digest', icon: '🎙️', class: 'teal' },
-                { label: 'Urgent Emails Caught', val: dashboardStats?.estimated_urgent_emails?.toLocaleString() || '0', trend: 'Priority detection', icon: '⚠️', class: 'red' },
-                { label: 'Hours Saved', val: (((dashboardStats?.total_emails || 0) * 18) / 3600).toFixed(1), trend: 'Efficiency gain', icon: '⏳', class: 'blue' }
+                { label: 'Emails Summarized',  val: (statsData?.emails_analyzed || 0).toLocaleString(),                                                    trend: `${dashboardDynamic?.emails_this_week || 0} this week`,  icon: '✨', class: 'amber' },
+                { label: 'AI Replies Ready',   val: (statsData?.replies_drafted || 0).toLocaleString(),                                                    trend: 'Draft replies ready',                                  icon: '✍️', class: 'teal'  },
+                { label: 'Urgent Caught',      val: (statsData?.urgent_emails_caught || 0).toLocaleString(),                                               trend: 'Priority detection',                                   icon: '⚠️', class: 'red'   },
+                { label: 'Minutes Saved',      val: ((statsData?.emails_analyzed || 0) * 3).toLocaleString(),                                              trend: '3 min saved per email',                                icon: '⏳', class: 'blue'  }
               ].map((s, i) => (
                 <StatCard key={i} {...s} index={i} className={s.class} />
               ))}
@@ -1187,19 +1513,28 @@ const App = () => {
                         <div className="skel-line" style={{ width: '80%' }}></div>
                       </div>
                     ))
-                  ) : (
-                    (dashboardStats?.recent_activity_feed || []).map((a, i) => (
+                  ) : dashboardStats?.recent_activity_feed?.length > 0 ? (
+                    dashboardStats.recent_activity_feed.map((a, i) => (
                       <div key={i} className="activity-item">
-                        <div className="activity-icon">{a?.icon || '✉️'}</div>
+                        <div className="activity-icon" style={{
+                          background: a?.priority === 'urgent' ? 'rgba(240,165,0,0.15)' :
+                                      a?.priority === 'low'    ? 'rgba(26,171,138,0.15)' :
+                                      'var(--bg)'
+                        }}>{a?.icon || '✉️'}</div>
                         <div className="activity-content">
                           <div className="activity-text">{a?.text || 'Email activity detected'}</div>
-                          <div className="activity-time">{a?.time || 'Just now'}</div>
+                          <div className="activity-time" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>{a?.time || 'Just now'}</span>
+                            {a?.priority === 'urgent' && <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: '10px' }}>● URGENT</span>}
+                            {a?.priority === 'low'    && <span style={{ color: 'var(--teal)',  fontWeight: 700, fontSize: '10px' }}>● LOW</span>}
+                          </div>
                         </div>
                       </div>
                     ))
-                  )}
-                  {!isFetchingStats && (!dashboardStats?.recent_activity_feed || dashboardStats.recent_activity_feed.length === 0) && (
-                    <div className="empty-subtitle">No recent activity detected.</div>
+                  ) : (
+                    <div className="empty-subtitle" style={{ padding: '12px', color: 'var(--text-secondary)' }}>
+                      No AI-analyzed emails yet. Analyze some emails to see activity here.
+                    </div>
                   )}
                 </div>
               </div>
@@ -1288,7 +1623,20 @@ const App = () => {
               </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {/* ── Daily Digest ── */}
+        {activeTab === 'Daily Digest' && (
+          <DigestView
+            mails={mails}
+            aiResults={aiResults}
+            analyzingIds={analyzingIds}
+            analyzeEmail={analyzeEmail}
+          />
+        )}
+
+        {/* ── Mail List + Detail ── */}
+        {(activeTab !== 'Dashboard' && activeTab !== 'Daily Digest') && (
           <>
             {/* Mail List */}
             <main className="mail-list">
@@ -1396,9 +1744,11 @@ const App = () => {
                             <>
                               <p className="summary-text">{aiData.summary}</p>
                               {aiData.deadline && (
-                                <div className="deadline-chip">
-                                  🕒 Deadline: {aiData.deadline}
-                                </div>
+                                <DeadlineCountdown
+                                  deadline={aiData.deadline}
+                                  analyzedAt={aiData.analyzed_at}
+                                  emailDate={selectedMail?.internal_date}
+                                />
                               )}
                             </>
                           )
@@ -1441,8 +1791,42 @@ const App = () => {
 
                   {/* Email Content Card */}
                   <div className="card">
-                    <div className="card-label">
-                      <span>✉️</span> Email Content
+                    <div className="card-label" style={{ justifyContent: 'space-between' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>✉️</span> Email Content
+                      </span>
+                      {fullBodies[selectedMail.id] && (
+                        <button
+                          onClick={() => setFullBodies(prev => {
+                            const next = { ...prev };
+                            delete next[selectedMail.id];
+                            return next;
+                          })}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid var(--border-muted)',
+                            color: 'var(--text-secondary)',
+                            borderRadius: '6px',
+                            padding: '2px 10px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            lineHeight: '1.4',
+                            transition: 'all 0.15s',
+                            fontWeight: '600',
+                          }}
+                          onMouseEnter={e => {
+                            e.target.style.background = 'var(--border-muted)';
+                            e.target.style.color = 'var(--text-primary)';
+                          }}
+                          onMouseLeave={e => {
+                            e.target.style.background = 'transparent';
+                            e.target.style.color = 'var(--text-secondary)';
+                          }}
+                          title="Close full email"
+                        >
+                          ✕ Close
+                        </button>
+                      )}
                     </div>
                     {fullBodies[selectedMail.id] ? (
                       <EmailPreview html={fullBodies[selectedMail.id]} />
@@ -1455,6 +1839,7 @@ const App = () => {
                       </div>
                     )}
                   </div>
+
 
                   {/* AI Draft Card */}
                   <div className="card">
@@ -1513,9 +1898,10 @@ const App = () => {
             )}
           </section>
         </>
-      )}
-    </div>
-  </ErrorBoundary>
+        )}
+
+      </div>
+    </ErrorBoundary>
   );
 };
 

@@ -3,5 +3,6 @@ dist/
 .env
 server/__pycache__/
 server/.env
+server/serviceAccountKey.json
 *.pyc
 .DS_Store

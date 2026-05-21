@@ -7,3 +7,5 @@ google-api-python-client
 python-dotenv
 python-jose[cryptography]
 httpx
+groq
+firebase-admin
