@@ -1389,61 +1389,6 @@ const App = () => {
           </div>
 
           <div style={{ marginTop: 'auto', padding: '12px 8px' }}>
-            {/* Tone selector */}
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '8px' }}>Briefing Tone</div>
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {[
-                  { key: 'energetic', label: '⚡ Energetic' },
-                  { key: 'humorous', label: '😄 Humorous' },
-                  { key: 'calm',     label: '🧘 Calm' },
-                  { key: 'formal',   label: '🎩 Formal' },
-                ].map(t => (
-                  <button
-                    key={t.key}
-                    onClick={() => { setBriefingTone(t.key); localStorage.setItem('mp_tone', t.key); }}
-                    style={{
-                      padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
-                      cursor: 'pointer', border: '1px solid',
-                      borderColor: briefingTone === t.key ? 'var(--amber)' : 'var(--border-muted)',
-                      background: briefingTone === t.key ? 'rgba(255,159,10,0.15)' : 'transparent',
-                      color: briefingTone === t.key ? 'var(--amber)' : 'var(--text-secondary)',
-                      transition: 'all 0.15s',
-                    }}
-                  >{t.label}</button>
-                ))}
-              </div>
-            </div>
-
-            {/* WhatsApp number */}
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '8px' }}>WhatsApp Number</div>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <input
-                  type="tel"
-                  placeholder="+91 98765 43210"
-                  value={whatsappNumber}
-                  onChange={e => setWhatsappNumber(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && saveWhatsappNumber(whatsappNumber)}
-                  style={{
-                    flex: 1, padding: '6px 10px', borderRadius: '8px', fontSize: '12px',
-                    background: 'var(--bg)', border: '1px solid var(--border)',
-                    color: 'var(--text-primary)', outline: 'none', minWidth: 0,
-                  }}
-                />
-                <button
-                  onClick={() => saveWhatsappNumber(whatsappNumber)}
-                  style={{
-                    padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 700,
-                    background: whatsappSaved ? 'rgba(50,173,230,0.2)' : 'rgba(255,159,10,0.15)',
-                    border: `1px solid ${whatsappSaved ? '#32ADE6' : 'var(--amber)'}`,
-                    color: whatsappSaved ? '#32ADE6' : 'var(--amber)', cursor: 'pointer',
-                    transition: 'all 0.2s', whiteSpace: 'nowrap',
-                  }}
-                >{whatsappSaved ? '✓ Saved' : 'Save'}</button>
-              </div>
-            </div>
-
             <span className="sign-out" style={{ fontSize: '12px' }} onClick={handleLogout}>Sign out</span>
           </div>
         </aside>
@@ -1592,6 +1537,78 @@ const App = () => {
                   ))
                 ) : (
                   <div className="empty-subtitle" style={{ padding: '12px' }}>No briefing history available.</div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Briefing Settings Panel ── */}
+            <div className="panel" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px', alignItems: 'start' }}>
+              {/* Tone selector */}
+              <div>
+                <h2 className="panel-title" style={{ marginBottom: '16px' }}><span>🎚️</span> Briefing Tone</h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+                  Choose how your AI morning briefing sounds. Takes effect on the next generation.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  {[
+                    { key: 'energetic', label: '⚡ Energetic', desc: 'Hyped, punchy, motivating' },
+                    { key: 'humorous',  label: '😄 Humorous',  desc: 'Witty, dry, Grok-style' },
+                    { key: 'calm',      label: '🧘 Calm',      desc: 'Smooth, measured, NPR-style' },
+                    { key: 'formal',    label: '🎩 Formal',    desc: 'Professional, precise, no jokes' },
+                  ].map(t => (
+                    <button
+                      key={t.key}
+                      onClick={() => { setBriefingTone(t.key); localStorage.setItem('mp_tone', t.key); }}
+                      style={{
+                        padding: '12px 14px', borderRadius: '12px', textAlign: 'left',
+                        cursor: 'pointer', border: '1px solid', transition: 'all 0.15s',
+                        borderColor: briefingTone === t.key ? 'var(--amber)' : 'var(--border)',
+                        background: briefingTone === t.key ? 'rgba(255,159,10,0.1)' : 'var(--bg)',
+                        boxShadow: briefingTone === t.key ? '0 0 0 1px rgba(255,159,10,0.3)' : 'none',
+                      }}
+                    >
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: briefingTone === t.key ? 'var(--amber)' : 'var(--text-primary)', marginBottom: '3px' }}>{t.label}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* WhatsApp number */}
+              <div>
+                <h2 className="panel-title" style={{ marginBottom: '16px' }}><span>📱</span> WhatsApp Delivery</h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+                  Save your number to receive morning briefings directly on WhatsApp. Used for the upcoming auto-delivery feature.
+                </p>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+                  <input
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    value={whatsappNumber}
+                    onChange={e => setWhatsappNumber(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && saveWhatsappNumber(whatsappNumber)}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: '10px', fontSize: '13px',
+                      background: 'var(--bg)', border: '1px solid var(--border)',
+                      color: 'var(--text-primary)', outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={() => saveWhatsappNumber(whatsappNumber)}
+                    style={{
+                      padding: '10px 18px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
+                      background: whatsappSaved ? 'rgba(50,173,230,0.15)' : 'rgba(255,159,10,0.15)',
+                      border: `1px solid ${whatsappSaved ? '#32ADE6' : 'var(--amber)'}`,
+                      color: whatsappSaved ? '#32ADE6' : 'var(--amber)',
+                      cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+                    }}
+                  >{whatsappSaved ? '✓ Saved' : 'Save'}</button>
+                </div>
+                {whatsappNumber && (
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ color: '#25D366' }}>●</span>
+                    Number saved — ready for auto-delivery
+                  </div>
                 )}
               </div>
             </div>
