@@ -407,9 +407,21 @@ const App = () => {
     try {
       const urgentEmails = mails
         .filter(m => aiResults[m.id]?.priority === 'urgent' || aiResults[m.id]?.priority === 'high')
-        .map(m => ({ subject: m.subject, summary: aiResults[m.id]?.summary || m.snippet }));
+        .map(m => ({ 
+          id: m.id, 
+          subject: m.subject, 
+          from_name: m.from_name, 
+          snippet: m.snippet,
+          summary: aiResults[m.id]?.summary || m.snippet 
+        }));
       
-      const payload = urgentEmails.length > 0 ? urgentEmails : mails.slice(0, 5).map(m => ({ subject: m.subject, summary: aiResults[m.id]?.summary || m.snippet }));
+      const payload = urgentEmails.length > 0 ? urgentEmails : mails.slice(0, 5).map(m => ({ 
+        id: m.id, 
+        subject: m.subject, 
+        from_name: m.from_name, 
+        snippet: m.snippet,
+        summary: aiResults[m.id]?.summary || m.snippet 
+      }));
 
       const token = localStorage.getItem('mp_token');
       const res = await fetch(`${API_BASE}/ai/generate-morning-briefing`, {

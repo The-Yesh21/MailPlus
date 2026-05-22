@@ -285,67 +285,149 @@ def analyze_email_hf(from_name, subject, body_preview):
         "draft_reply": data.get("draft_reply", "Draft generation failed.")
     }
 
+def generate_voice_briefing(script: str) -> bytes:
+    try:
+        pipeline = get_kokoro_pipeline()
+        generator = pipeline(
+            script,
+            voice='af_bella',
+            speed=1.1
+        )
+        audio_chunks = []
+        for i, (gs, ps, audio) in enumerate(generator):
+            audio_chunks.append(audio)
+        if not audio_chunks:
+            return None
+        full_audio = np.concatenate(audio_chunks)
+        buffer = io.BytesIO()
+        sf.write(buffer, full_audio, 24000, format='WAV')
+        buffer.seek(0)
+        return buffer.read()
+    except Exception as e:
+        print(f"Kokoro TTS error: {traceback.format_exc()}")
+        return None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.post("/ai/generate-morning-briefing")
-async def generate_morning_briefing(request: Request, user=Depends(get_current_user)):
+@app.post("/voice/generate")
+async def generate_voice_endpoint(request: Request, user=Depends(get_current_user)):
     body = await request.json()
     emails = body.get("emails", [])
+    user_email = user.get("email", "")
+    
     if not emails:
         raise HTTPException(status_code=400, detail="No emails provided")
         
-    # Build prompt from emails
-    summaries_text = "\n".join([f"- {e.get('subject', '')}: {e.get('summary', '')}" for e in emails[:5]])
-    
-    prompt = f"""You are a highly motivating, energetic AI assistant. Write a short, powerful morning audio briefing script (max 3-4 sentences) summarizing these emails. 
-Start with an encouraging morning greeting, summarize the key urgent things to do today, and end on a high note. 
-Do not use emojis or markdown, this will be read by a Text-to-Speech engine. Make it sound natural and spoken.
-Emails:
-{summaries_text}
-"""
-    
-    loop = asyncio.get_event_loop()
-    # Use the existing Groq engine to generate the spoken script
-    script = await loop.run_in_executor(
-        None,
-        partial(call_groq, prompt, "You are an expert audio scriptwriter.", 300)
+    # Fetch AI results from Firestore to build the script
+    ai_results = {}
+    try:
+        results_ref = fs.collection("email_ai").document(user_email).collection("results")
+        docs = results_ref.stream()
+        for doc in docs:
+            ai_results[doc.id] = doc.to_dict()
+    except Exception as e:
+        print(f"Error fetching AI results for briefing: {e}")
+
+    name = user.get("name", "").split()[0]
+    urgent = [e for e in emails 
+              if ai_results.get(e.get("id"), {}).get("priority") == "urgent"]
+    reply_needed = [e for e in emails 
+                    if ai_results.get(e.get("id"), {}).get("requires_reply")
+                    and ai_results.get(e.get("id"), {}).get("priority") != "urgent"]
+    total = len(emails)
+
+    script_parts = []
+
+    # Energetic opener
+    script_parts.append(
+        f"Hey {name}! Rise and shine — MailPulse has your back. "
+        f"Let's crush today's inbox!"
     )
-    
-    if not script:
-        script = "Good morning! You have a few important updates to check in your inbox today. Have a great day!"
-        
+
+    # Email count with energy
+    if urgent:
+        script_parts.append(
+            f"Heads up — out of {total} emails, "
+            f"{len(urgent)} need your attention RIGHT NOW."
+        )
+    else:
+        script_parts.append(
+            f"Good news — you've got {total} emails "
+            f"and nothing is on fire. Let's keep it that way!"
+        )
+
+    # Urgent emails — direct and punchy
+    if urgent:
+        script_parts.append("Here are your urgent ones —")
+        for i, email in enumerate(urgent[:3]):
+            ai = ai_results.get(email.get("id"), {})
+            summary = ai.get("summary", email.get("snippet", ""))
+            deadline = ai.get("deadline")
+            script_parts.append(
+                f"Number {i+1}. {email.get('from_name', 'Someone')} says — "
+                f"{summary}"
+            )
+            if deadline and deadline != "null" and deadline != "None":
+                script_parts.append(
+                    f"Watch out — deadline is {deadline}. Don't miss it!"
+                )
+
+    # Reply needed — motivating
+    if reply_needed:
+        script_parts.append(
+            f"Also, {len(reply_needed)} people are waiting to hear back from you. "
+            f"A quick reply goes a long way!"
+        )
+        for email in reply_needed[:2]:
+            script_parts.append(
+                f"{email.get('from_name', 'Someone')} is waiting on — {email.get('subject', 'an email')}."
+            )
+
+    # All clear scenario
+    if not urgent and not reply_needed:
+        script_parts.append(
+            "Your inbox is clean, your mind is free. "
+            "Today is yours — go make it count!"
+        )
+
+    # Energetic close
+    script_parts.append(
+        f"That's your MailPulse briefing, {name}. "
+        "Now go out there and own the day. You've got this!"
+    )
+
+    full_script = " ".join(script_parts)
+
+    # Add sentence-level pauses for natural rhythm
+    full_script = full_script.replace(". ", "... ")
+    full_script = full_script.replace("! ", "! ... ")
+    full_script = full_script.replace("? ", "? ... ")
+
     # Generate TTS
     filename = f"{uuid.uuid4().hex}.wav"
     filepath = os.path.join("audio", filename)
     
-    def generate_kokoro_audio(script_text, out_path):
-        try:
-            pipeline = get_kokoro_pipeline()
-            generator = pipeline(script_text, voice='af_sarah', speed=1.0)
-            
-            audio_chunks = []
-            for i, (gs, ps, audio) in enumerate(generator):
-                audio_chunks.append(audio)
-            
-            if not audio_chunks:
-                print("No audio chunks generated")
-                return
-            
-            full_audio = np.concatenate(audio_chunks)
-            sf.write(out_path, full_audio, 24000, format='WAV')
-            print(f"Generated kokoro audio to {out_path}")
-        except Exception as e:
-            print(f"Kokoro TTS error: {e}")
-
-    # Save the file (blocking call run in executor)
-    await loop.run_in_executor(None, generate_kokoro_audio, script, filepath)
+    loop = asyncio.get_event_loop()
+    audio_data = await loop.run_in_executor(None, generate_voice_briefing, full_script)
+    
+    if not audio_data:
+        raise HTTPException(status_code=500, detail="Voice generation failed")
+        
+    async with aiofiles.open(filepath, mode='wb') as f:
+        await f.write(audio_data)
     
     # Return the URL
-    frontend_url = request.base_url
-    # Ensure it uses the server host/port, though request.base_url usually does
+    frontend_url = str(request.base_url)
     audio_url = f"{frontend_url}audio/{filename}"
     
-    return {"url": audio_url, "script": script}
+    return {"url": audio_url, "script": full_script}
+
+
+@app.post("/ai/generate-morning-briefing")
+async def generate_morning_briefing(request: Request, user=Depends(get_current_user)):
+    # Redirect to the new voice generation endpoint logic for backward compatibility
+    return await generate_voice_endpoint(request, user)
 
 
 @app.get("/health")
