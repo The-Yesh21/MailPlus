@@ -310,16 +310,64 @@ def generate_voice_briefing(script: str) -> bytes:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+def build_briefing_prompt(name: str, total: int, urgent_emails: list, reply_emails: list) -> str:
+    """Build the Groq prompt for generating a witty, Grok-style morning briefing script."""
+
+    urgent_lines = ""
+    for i, e in enumerate(urgent_emails[:3]):
+        ai = e.get("ai", {})
+        summary = ai.get("summary", e.get("snippet", "no details"))
+        deadline = ai.get("deadline")
+        dl_note = f" Deadline: {deadline}." if deadline and deadline not in ("null", "None") else ""
+        urgent_lines += f"  {i+1}. From {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {summary}{dl_note}\n"
+
+    reply_lines = ""
+    for e in reply_emails[:2]:
+        reply_lines += f"  - {e.get('from_name','Someone')} is waiting on: {e.get('subject','an email')}\n"
+
+    inbox_status = (
+        f"{len(urgent_emails)} urgent email(s) need immediate attention."
+        if urgent_emails else
+        "No urgent emails. Inbox is chill."
+    )
+    reply_status = (
+        f"{len(reply_emails)} email(s) need a reply."
+        if reply_emails else
+        "No pending replies needed."
+    )
+
+    return f"""You are MailPulse, a witty AI email assistant with the personality of Grok — sharp, funny, a little sarcastic, but genuinely helpful. 
+You are generating a spoken morning briefing script for a text-to-speech voice agent.
+
+CRITICAL RULES:
+- The user's name is "{name}" — spelled phonetically as "Yesh-wanth" for TTS. Use this exact spelling every time you say the name.
+- Write ONLY the spoken script. No stage directions, no markdown, no asterisks, no bullet points.
+- Keep it under 120 words total.
+- Use natural spoken language with short punchy sentences.
+- Be witty and slightly humorous like Grok — dry wit, a clever observation or two, but never at the expense of being useful.
+- End with an energetic sign-off.
+- Use "..." for natural pauses between sentences.
+
+INBOX DATA:
+- Total emails: {total}
+- Status: {inbox_status}
+- Replies needed: {reply_status}
+{f"Urgent emails:{chr(10)}{urgent_lines}" if urgent_emails else ""}
+{f"Needs reply:{chr(10)}{reply_lines}" if reply_emails else ""}
+
+Write the briefing script now:"""
+
+
 @app.post("/voice/generate")
 async def generate_voice_endpoint(request: Request, user=Depends(get_current_user)):
     body = await request.json()
     emails = body.get("emails", [])
     user_email = user.get("email", "")
-    
+
     if not emails:
         raise HTTPException(status_code=400, detail="No emails provided")
-        
-    # Fetch AI results from Firestore to build the script
+
+    # Fetch AI results from Firestore
     ai_results = {}
     try:
         results_ref = fs.collection("email_ai").document(user_email).collection("results")
@@ -329,98 +377,67 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     except Exception as e:
         print(f"Error fetching AI results for briefing: {e}")
 
-    name = user.get("name", "").split()[0]
-    urgent = [e for e in emails 
-              if ai_results.get(e.get("id"), {}).get("priority") == "urgent"]
-    reply_needed = [e for e in emails 
-                    if ai_results.get(e.get("id"), {}).get("requires_reply")
-                    and ai_results.get(e.get("id"), {}).get("priority") != "urgent"]
+    # Use phonetic spelling so Kokoro pronounces it correctly
+    raw_name = user.get("name", "").split()[0]
+    phonetic_name = "Yesh-wanth" if raw_name.lower() in ("yeshwanth", "yeshwant", "yeshvanth") else raw_name
+
+    urgent_emails = [
+        {**e, "ai": ai_results.get(e.get("id"), {})}
+        for e in emails
+        if ai_results.get(e.get("id"), {}).get("priority") == "urgent"
+    ]
+    reply_emails = [
+        {**e, "ai": ai_results.get(e.get("id"), {})}
+        for e in emails
+        if ai_results.get(e.get("id"), {}).get("requires_reply")
+        and ai_results.get(e.get("id"), {}).get("priority") != "urgent"
+    ]
     total = len(emails)
 
-    script_parts = []
-
-    # Energetic opener
-    script_parts.append(
-        f"Hey {name}! Rise and shine — MailPulse has your back. "
-        f"Let's crush today's inbox!"
+    # Generate script via Groq
+    prompt = build_briefing_prompt(phonetic_name, total, urgent_emails, reply_emails)
+    loop = asyncio.get_event_loop()
+    raw_script = await loop.run_in_executor(
+        None,
+        partial(call_groq, prompt,
+                "You are a witty AI voice assistant. Output only the spoken script, nothing else.",
+                300)
     )
 
-    # Email count with energy
-    if urgent:
-        script_parts.append(
-            f"Heads up — out of {total} emails, "
-            f"{len(urgent)} need your attention RIGHT NOW."
-        )
-    else:
-        script_parts.append(
-            f"Good news — you've got {total} emails "
-            f"and nothing is on fire. Let's keep it that way!"
+    # Fallback if Groq fails
+    if not raw_script:
+        raw_script = (
+            f"Hey {phonetic_name}! ... MailPulse here. ... "
+            f"You've got {total} emails today. ... "
+            + (f"{len(urgent_emails)} are urgent — check them now. ... " if urgent_emails else "Nothing urgent. ... ")
+            + (f"{len(reply_emails)} people are waiting on a reply. ... " if reply_emails else "")
+            + f"Go get it, {phonetic_name}. ... You've got this!"
         )
 
-    # Urgent emails — direct and punchy
-    if urgent:
-        script_parts.append("Here are your urgent ones —")
-        for i, email in enumerate(urgent[:3]):
-            ai = ai_results.get(email.get("id"), {})
-            summary = ai.get("summary", email.get("snippet", ""))
-            deadline = ai.get("deadline")
-            script_parts.append(
-                f"Number {i+1}. {email.get('from_name', 'Someone')} says — "
-                f"{summary}"
-            )
-            if deadline and deadline != "null" and deadline != "None":
-                script_parts.append(
-                    f"Watch out — deadline is {deadline}. Don't miss it!"
-                )
+    # Clean up any markdown artifacts Groq might sneak in
+    full_script = raw_script.strip()
+    full_script = full_script.replace("**", "").replace("*", "").replace("#", "")
 
-    # Reply needed — motivating
-    if reply_needed:
-        script_parts.append(
-            f"Also, {len(reply_needed)} people are waiting to hear back from you. "
-            f"A quick reply goes a long way!"
-        )
-        for email in reply_needed[:2]:
-            script_parts.append(
-                f"{email.get('from_name', 'Someone')} is waiting on — {email.get('subject', 'an email')}."
-            )
-
-    # All clear scenario
-    if not urgent and not reply_needed:
-        script_parts.append(
-            "Your inbox is clean, your mind is free. "
-            "Today is yours — go make it count!"
-        )
-
-    # Energetic close
-    script_parts.append(
-        f"That's your MailPulse briefing, {name}. "
-        "Now go out there and own the day. You've got this!"
-    )
-
-    full_script = " ".join(script_parts)
-
-    # Add sentence-level pauses for natural rhythm
+    # Ensure natural TTS pauses
     full_script = full_script.replace(". ", "... ")
-    full_script = full_script.replace("! ", "! ... ")
-    full_script = full_script.replace("? ", "? ... ")
+    full_script = full_script.replace("! ", "!... ")
+    full_script = full_script.replace("? ", "?... ")
 
-    # Generate TTS
+    # Generate TTS audio
     filename = f"{uuid.uuid4().hex}.wav"
     filepath = os.path.join("audio", filename)
-    
-    loop = asyncio.get_event_loop()
+
     audio_data = await loop.run_in_executor(None, generate_voice_briefing, full_script)
-    
+
     if not audio_data:
         raise HTTPException(status_code=500, detail="Voice generation failed")
-        
+
     async with aiofiles.open(filepath, mode='wb') as f:
         await f.write(audio_data)
-    
-    # Return the URL
+
     frontend_url = str(request.base_url)
     audio_url = f"{frontend_url}audio/{filename}"
-    
+
     return {"url": audio_url, "script": full_script}
 
 

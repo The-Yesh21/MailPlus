@@ -188,6 +188,7 @@ const initials = (name) => (name||'?').split(' ').map(w=>w[0]).join('').slice(0,
 const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCountdown }) => {
   const [sel, setSel]             = useState(null);
   const [activeChip, setActiveChip] = useState(null); // which chip popover is open
+  const [fyiExpanded, setFyiExpanded] = useState(false);
   const popoverRef = useRef(null);
 
   const urgent   = mails.filter(m => aiResults[m.id]?.priority === 'urgent');
@@ -379,17 +380,34 @@ const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCoun
                 <div className="digest-fyi-title">💡 Also In Your Inbox</div>
                 {fyi.length === 0
                   ? <div className="digest-empty" style={{padding:'8px 0'}}>All clear!</div>
-                  : fyi.map(m => (
-                    <div key={m.id} className="digest-fyi-item" onClick={() => open(m.id)}
-                      style={{ opacity: sel===m.id ? 1 : 0.8 }}>
-                      <div className="digest-fyi-dot" style={{ background: sel===m.id ? '#FF9F0A':'#32ADE6' }} />
-                      <div className="digest-fyi-text">
-                        <div className="digest-fyi-sender">{(m.from_name||m.from_email||'').split(' ')[0]}</div>
-                        <div className="digest-fyi-subj">{m.subject}</div>
-                      </div>
-                      <div className="digest-fyi-time">{m.date?.match(/\d+:\d+/)?.[0]||''}</div>
-                    </div>
-                  ))
+                  : <>
+                      {(fyiExpanded ? fyi : fyi.slice(0, 5)).map(m => (
+                        <div key={m.id} className="digest-fyi-item" onClick={() => open(m.id)}
+                          style={{ opacity: sel===m.id ? 1 : 0.8 }}>
+                          <div className="digest-fyi-dot" style={{ background: sel===m.id ? '#FF9F0A':'#32ADE6' }} />
+                          <div className="digest-fyi-text">
+                            <div className="digest-fyi-sender">{(m.from_name||m.from_email||'').split(' ')[0]}</div>
+                            <div className="digest-fyi-subj">{m.subject}</div>
+                          </div>
+                          <div className="digest-fyi-time">{m.date?.match(/\d+:\d+/)?.[0]||''}</div>
+                        </div>
+                      ))}
+                      {fyi.length > 5 && (
+                        <button
+                          onClick={() => setFyiExpanded(p => !p)}
+                          style={{
+                            width:'100%', marginTop:'8px', padding:'6px',
+                            background:'transparent', border:'1px solid var(--border-muted)',
+                            borderRadius:'8px', color:'var(--text-secondary)',
+                            fontSize:'11px', cursor:'pointer', transition:'all 0.15s'
+                          }}
+                          onMouseEnter={e => e.target.style.borderColor='var(--border)'}
+                          onMouseLeave={e => e.target.style.borderColor='var(--border-muted)'}
+                        >
+                          {fyiExpanded ? '▲ Show less' : `▼ +${fyi.length - 5} more`}
+                        </button>
+                      )}
+                    </>
                 }
               </div>
             </div>

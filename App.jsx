@@ -283,6 +283,8 @@ const App = () => {
   const [globalError, setGlobalError] = useState(null);
   const [profileImgError, setProfileImgError] = useState(false);
 
+  const audioRef = useRef(null);
+
   const API_BASE = "http://localhost:8000";
 
   // Auth & Token Management
@@ -1775,11 +1777,26 @@ const App = () => {
                 {/* Voice Briefing Bar */}
                 <div className="voice-bar">
                   <div className="play-circle" onClick={() => {
-                    if (briefingAudioUrl) {
+                    if (!briefingAudioUrl) return;
+                    if (isPlayingBriefing) {
+                      // Stop playback
+                      if (audioRef.current) {
+                        audioRef.current.pause();
+                        audioRef.current.currentTime = 0;
+                        audioRef.current = null;
+                      }
+                      setIsPlayingBriefing(false);
+                    } else {
+                      // Start playback
                       const audio = new Audio(briefingAudioUrl);
+                      audio.onended = () => {
+                        setIsPlayingBriefing(false);
+                        audioRef.current = null;
+                      };
+                      audioRef.current = audio;
                       audio.play();
+                      setIsPlayingBriefing(true);
                     }
-                    setIsPlayingBriefing(!isPlayingBriefing)
                   }}>
                     {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
                   </div>
