@@ -148,15 +148,29 @@ const getSenderColor = (name) => {
 
 const initials = (name) => (name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 
-const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCountdown }) => {
+const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCountdown, isDeadlineExpired }) => {
   const [sel, setSel] = useState(null);
   const [activeChip, setActiveChip] = useState(null);
   const [fyiExpanded, setFyiExpanded] = useState(false);
   const popoverRef = useRef(null);
 
-  const urgent   = mails.filter(m => aiResults[m.id]?.priority === 'urgent');
-  const action   = mails.filter(m => aiResults[m.id]?.requires_reply && aiResults[m.id]?.priority !== 'urgent');
-  const briefing = mails.filter(m => aiResults[m.id]?.priority === 'normal' && !aiResults[m.id]?.requires_reply);
+  // An email is only truly urgent if its deadline hasn't passed yet
+  const isEffectivelyUrgent = (m) => {
+    const ai = aiResults[m.id];
+    if (!ai || ai.priority !== 'urgent') return false;
+    if (ai.deadline && isDeadlineExpired(ai.deadline, m.internal_date)) return false;
+    return true;
+  };
+
+  const urgent   = mails.filter(m => isEffectivelyUrgent(m));
+  const action   = mails.filter(m => aiResults[m.id]?.requires_reply && !isEffectivelyUrgent(m));
+  const briefing = mails.filter(m => {
+    const ai = aiResults[m.id];
+    if (!ai) return false;
+    // Expired-deadline urgent emails fall into briefing (they were urgent, now just informational)
+    if (ai.priority === 'urgent' && ai.deadline && isDeadlineExpired(ai.deadline, m.internal_date)) return true;
+    return ai.priority === 'normal' && !ai.requires_reply;
+  });
   const fyi      = mails.filter(m => !aiResults[m.id] || aiResults[m.id]?.priority === 'low');
   const [hero, ...restUrgent] = urgent;
 

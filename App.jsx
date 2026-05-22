@@ -418,22 +418,18 @@ const App = () => {
   const generateAndSendBriefing = async () => {
     setIsGeneratingBriefing(true);
     try {
-      const urgentEmails = mails
-        .filter(m => aiResults[m.id]?.priority === 'urgent' || aiResults[m.id]?.priority === 'high')
-        .map(m => ({ 
-          id: m.id, 
-          subject: m.subject, 
-          from_name: m.from_name, 
-          snippet: m.snippet,
-          summary: aiResults[m.id]?.summary || m.snippet 
-        }));
-      
-      const payload = urgentEmails.length > 0 ? urgentEmails : mails.slice(0, 5).map(m => ({ 
-        id: m.id, 
-        subject: m.subject, 
-        from_name: m.from_name, 
-        snippet: m.snippet,
-        summary: aiResults[m.id]?.summary || m.snippet 
+      // Send ALL mails with full context — backend will categorize and prioritize
+      const payload = mails.slice(0, 30).map(m => ({
+        id:            m.id,
+        threadId:      m.threadId,
+        subject:       m.subject,
+        from_name:     m.from_name,
+        from_email:    m.from_email,
+        snippet:       m.snippet,
+        internal_date: m.internal_date,
+        is_read:       m.is_read,
+        labels:        m.labels || [],
+        ai:            aiResults[m.id] || null,
       }));
 
       const token = localStorage.getItem('mp_token');
@@ -1537,6 +1533,7 @@ const App = () => {
             analyzingIds={analyzingIds}
             analyzeEmail={analyzeEmail}
             DeadlineCountdown={DeadlineCountdown}
+            isDeadlineExpired={isDeadlineExpired}
           />
         )}
 

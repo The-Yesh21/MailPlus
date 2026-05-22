@@ -310,50 +310,178 @@ def generate_voice_briefing(script: str) -> bytes:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-def build_briefing_prompt(name: str, total: int, urgent_emails: list, reply_emails: list) -> str:
-    """Build the Groq prompt for generating a witty, Grok-style morning briefing script."""
+def phonetic_name_for_tts(raw: str) -> str:
+    """
+    Map known Indian names to phoneme sequences that Kokoro's English model
+    pronounces correctly. We avoid hyphens (Kokoro ignores them) and instead
+    use spaced syllables that map to the right sounds.
+    """
+    mapping = {
+        "yeshwanth": "Yesh wunt",
+        "yeshwant":  "Yesh wunt",
+        "yeshvanth": "Yesh wunt",
+        "yeshvanth": "Yesh wunt",
+    }
+    return mapping.get(raw.strip().lower(), raw)
 
-    urgent_lines = ""
-    for i, e in enumerate(urgent_emails[:3]):
-        ai = e.get("ai", {})
-        summary = ai.get("summary", e.get("snippet", "no details"))
+
+def categorize_emails(emails: list, ai_results: dict) -> dict:
+    """
+    Categorize emails into work/career/finance/action/thread buckets.
+    Returns a dict with lists for each category.
+    """
+    work_keywords    = ["github", "deploy", "api", "server", "pull request", "merge", "build",
+                        "project", "sprint", "jira", "slack", "meeting", "standup", "review",
+                        "production", "bug", "release", "update", "team"]
+    career_keywords  = ["internship", "interview", "application", "offer", "hiring", "job",
+                        "course", "certificate", "hackathon", "placement", "resume", "linkedin",
+                        "skillbytes", "internshala", "naukri", "campus", "college", "university"]
+    finance_keywords = ["payment", "invoice", "bill", "subscription", "bank", "transaction",
+                        "refund", "charge", "due", "receipt", "order", "purchase", "wallet",
+                        "upi", "razorpay", "stripe", "paypal", "credit", "debit"]
+
+    work, career, finance, action_items = [], [], [], []
+
+    # Group by threadId for conversation continuity
+    threads: dict = {}
+    for e in emails:
+        tid = e.get("threadId") or e.get("id")
+        if tid not in threads:
+            threads[tid] = []
+        threads[tid].append(e)
+
+    # Multi-email threads (conversation continuity candidates)
+    thread_convos = [
+        msgs for msgs in threads.values()
+        if len(msgs) > 1
+    ]
+
+    for e in emails:
+        ai  = ai_results.get(e.get("id"), {}) or e.get("ai") or {}
+        subj = (e.get("subject") or "").lower()
+        snip = (e.get("snippet") or "").lower()
+        text = f"{subj} {snip}"
+
+        # Action items — things that need a decision or action
+        draft = ai.get("draft_reply", "") or ""
+        reason = ai.get("reason", "") or ""
+        if ai.get("requires_reply") or ai.get("priority") == "urgent":
+            action_items.append({**e, "ai": ai})
+
+        if any(k in text for k in finance_keywords):
+            finance.append({**e, "ai": ai})
+        elif any(k in text for k in career_keywords):
+            career.append({**e, "ai": ai})
+        elif any(k in text for k in work_keywords):
+            work.append({**e, "ai": ai})
+
+    return {
+        "work":         work[:4],
+        "career":       career[:4],
+        "finance":      finance[:3],
+        "action_items": action_items[:5],
+        "thread_convos": thread_convos[:3],
+    }
+
+
+def build_briefing_prompt(name: str, total: int, urgent_emails: list,
+                          reply_emails: list, top_emails: list,
+                          categories: dict) -> str:
+    """
+    Build a rich Groq prompt that produces a structured, chief-of-staff style
+    morning briefing covering: overview, categories, action items, and thread continuity.
+    """
+
+    # ── Overview numbers ──────────────────────────────────────────────────────
+    deadline_count = sum(
+        1 for e in urgent_emails
+        if (e.get("ai") or {}).get("deadline")
+    )
+
+    # ── Category summaries ────────────────────────────────────────────────────
+    def fmt_category(label: str, items: list) -> str:
+        if not items:
+            return ""
+        lines = []
+        for e in items[:3]:
+            ai = e.get("ai") or {}
+            summary = ai.get("summary", e.get("snippet", ""))
+            one = summary.split(".")[0] if summary else e.get("snippet", "")[:80]
+            lines.append(f"  - {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {one}.")
+        return f"{label}:\n" + "\n".join(lines)
+
+    work_block    = fmt_category("Work & Projects",   categories.get("work", []))
+    career_block  = fmt_category("Career & Learning", categories.get("career", []))
+    finance_block = fmt_category("Financial",         categories.get("finance", []))
+
+    # ── Action items ──────────────────────────────────────────────────────────
+    action_lines = ""
+    for e in categories.get("action_items", [])[:5]:
+        ai = e.get("ai") or {}
+        reason = ai.get("reason") or ai.get("summary", "")
+        one = reason.split(".")[0] if reason else e.get("snippet", "")[:60]
         deadline = ai.get("deadline")
-        dl_note = f" Deadline: {deadline}." if deadline and deadline not in ("null", "None") else ""
-        urgent_lines += f"  {i+1}. From {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {summary}{dl_note}\n"
+        dl = f" (deadline: {deadline})" if deadline and deadline not in ("null","None") else ""
+        action_lines += f"  - {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {one}{dl}.\n"
 
-    reply_lines = ""
-    for e in reply_emails[:2]:
-        reply_lines += f"  - {e.get('from_name','Someone')} is waiting on: {e.get('subject','an email')}\n"
+    # ── Conversation continuity ───────────────────────────────────────────────
+    thread_lines = ""
+    for thread in categories.get("thread_convos", [])[:2]:
+        latest = thread[-1]
+        ai = (latest.get("ai") or {})
+        summary = ai.get("summary", latest.get("snippet", ""))
+        thread_lines += (
+            f"  - {latest.get('from_name','Someone')} continued the conversation "
+            f"about '{latest.get('subject','(no subject)')}': {summary.split('.')[0]}.\n"
+        )
 
-    inbox_status = (
-        f"{len(urgent_emails)} urgent email(s) need immediate attention."
-        if urgent_emails else
-        "No urgent emails. Inbox is chill."
-    )
-    reply_status = (
-        f"{len(reply_emails)} email(s) need a reply."
-        if reply_emails else
-        "No pending replies needed."
-    )
+    # ── Top emails fallback ───────────────────────────────────────────────────
+    top_lines = ""
+    for i, e in enumerate(top_emails[:5]):
+        ai = e.get("ai") or {}
+        summary = ai.get("summary", e.get("snippet", ""))
+        one = summary.split(".")[0] if summary else e.get("snippet", "")[:80]
+        top_lines += f"  {i+1}. {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {one}.\n"
 
-    return f"""You are MailPulse, a witty AI email assistant with the personality of Grok — sharp, funny, a little sarcastic, but genuinely helpful. 
-You are generating a spoken morning briefing script for a text-to-speech voice agent.
+    has_action = bool(urgent_emails or reply_emails)
+    has_categories = bool(work_block or career_block or finance_block)
 
-CRITICAL RULES:
-- The user's name is "{name}" — spelled phonetically as "Yesh-wanth" for TTS. Use this exact spelling every time you say the name.
-- Write ONLY the spoken script. No stage directions, no markdown, no asterisks, no bullet points.
-- Keep it under 120 words total.
-- Use natural spoken language with short punchy sentences.
-- Be witty and slightly humorous like Grok — dry wit, a clever observation or two, but never at the expense of being useful.
-- End with an energetic sign-off.
-- Use "..." for natural pauses between sentences.
+    return f"""You are MailPulse — an AI chief-of-staff delivering a spoken morning briefing.
+Your personality: sharp, witty, slightly like Grok — dry humor, direct, genuinely useful.
+You are generating a script for a text-to-speech voice agent.
+
+STRICT RULES:
+- User's name is "{name}". Use it 1-2 times naturally.
+- Output ONLY the spoken script. Zero markdown, zero bullet points, zero headers, zero asterisks.
+- Target 180-220 words — enough to be thorough but under 90 seconds spoken.
+- Natural spoken sentences. Use "..." for pauses between sections.
+- Be witty but never sacrifice clarity for a joke.
+- Structure the briefing in this exact order (skip a section only if it has no data):
+  1. Quick 2-sentence overview: total emails, urgent count, reply count, deadline count.
+  2. Work/Projects highlights (if any).
+  3. Career/Learning highlights (if any).
+  4. Financial alerts (if any).
+  5. Action items — specific decisions or tasks needed, not just summaries.
+  6. Conversation continuity — mention if someone replied to an ongoing thread.
+  7. Energetic sign-off line.
 
 INBOX DATA:
-- Total emails: {total}
-- Status: {inbox_status}
-- Replies needed: {reply_status}
-{f"Urgent emails:{chr(10)}{urgent_lines}" if urgent_emails else ""}
-{f"Needs reply:{chr(10)}{reply_lines}" if reply_emails else ""}
+Total emails: {total}
+Urgent: {len(urgent_emails)}
+Need reply: {len(reply_emails)}
+Deadlines within 24h: {deadline_count}
+
+{work_block if work_block else ""}
+{career_block if career_block else ""}
+{finance_block if finance_block else ""}
+
+Action items:
+{action_lines if action_lines else "  None today."}
+
+Ongoing conversations:
+{thread_lines if thread_lines else "  No active threads."}
+
+{"Top emails (no urgent/action items today):" + chr(10) + top_lines if not has_action and top_lines else ""}
 
 Write the briefing script now:"""
 
@@ -367,7 +495,7 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     if not emails:
         raise HTTPException(status_code=400, detail="No emails provided")
 
-    # Fetch AI results from Firestore
+    # Fetch AI results from Firestore (merge with any inline ai field from frontend)
     ai_results = {}
     try:
         results_ref = fs.collection("email_ai").document(user_email).collection("results")
@@ -377,9 +505,16 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     except Exception as e:
         print(f"Error fetching AI results for briefing: {e}")
 
-    # Use phonetic spelling so Kokoro pronounces it correctly
+    # Merge inline AI data sent from frontend into ai_results
+    for e in emails:
+        if e.get("ai") and e.get("id"):
+            ai_results.setdefault(e["id"], e["ai"])
+
+    # Phonetic name for Kokoro TTS
     raw_name = user.get("name", "").split()[0]
-    phonetic_name = "Yesh-wanth" if raw_name.lower() in ("yeshwanth", "yeshwant", "yeshvanth") else raw_name
+    phonetic_name = phonetic_name_for_tts(raw_name)
+
+    total = len(emails)
 
     urgent_emails = [
         {**e, "ai": ai_results.get(e.get("id"), {})}
@@ -392,33 +527,60 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
         if ai_results.get(e.get("id"), {}).get("requires_reply")
         and ai_results.get(e.get("id"), {}).get("priority") != "urgent"
     ]
-    total = len(emails)
+    top_emails = [
+        {**e, "ai": ai_results.get(e.get("id"), {})}
+        for e in emails[:5]
+    ]
+
+    # Categorize all emails
+    categories = categorize_emails(emails, ai_results)
 
     # Generate script via Groq
-    prompt = build_briefing_prompt(phonetic_name, total, urgent_emails, reply_emails)
+    prompt = build_briefing_prompt(
+        phonetic_name, total, urgent_emails, reply_emails, top_emails, categories
+    )
     loop = asyncio.get_event_loop()
     raw_script = await loop.run_in_executor(
         None,
         partial(call_groq, prompt,
-                "You are a witty AI voice assistant. Output only the spoken script, nothing else.",
-                300)
+                "You are a witty AI voice assistant delivering a morning briefing. "
+                "Output only the spoken script — no markdown, no bullet points, no headers.",
+                500)
     )
 
     # Fallback if Groq fails
     if not raw_script:
-        raw_script = (
-            f"Hey {phonetic_name}! ... MailPulse here. ... "
-            f"You've got {total} emails today. ... "
-            + (f"{len(urgent_emails)} are urgent — check them now. ... " if urgent_emails else "Nothing urgent. ... ")
-            + (f"{len(reply_emails)} people are waiting on a reply. ... " if reply_emails else "")
-            + f"Go get it, {phonetic_name}. ... You've got this!"
-        )
+        action_items = categories.get("action_items", [])
+        if urgent_emails or reply_emails:
+            parts = [f"Hey {phonetic_name}! ... MailPulse here. ... "
+                     f"You've got {total} emails. ... "]
+            if urgent_emails:
+                parts.append(f"{len(urgent_emails)} are urgent. ... ")
+            if reply_emails:
+                parts.append(f"{len(reply_emails)} need a reply. ... ")
+            if action_items:
+                a = action_items[0]
+                parts.append(f"Top action: {a.get('from_name','Someone')} — {a.get('subject','')}. ... ")
+            parts.append(f"Go get it, {phonetic_name}!")
+            raw_script = "".join(parts)
+        else:
+            top_summary = " ... ".join(
+                f"{e.get('from_name','Someone')}: {e.get('subject','an email')}"
+                for e in top_emails[:3]
+            )
+            raw_script = (
+                f"Hey {phonetic_name}! ... MailPulse here. ... "
+                f"Nothing urgent today — your inbox is actually behaving itself. ... "
+                f"Here's what came in: ... {top_summary}. ... "
+                f"Have a great day!"
+            )
 
-    # Clean up any markdown artifacts Groq might sneak in
+    # Strip any markdown Groq might sneak in
     full_script = raw_script.strip()
-    full_script = full_script.replace("**", "").replace("*", "").replace("#", "")
+    for ch in ["**", "*", "##", "#", "- ", "• "]:
+        full_script = full_script.replace(ch, "")
 
-    # Ensure natural TTS pauses
+    # Natural TTS pauses
     full_script = full_script.replace(". ", "... ")
     full_script = full_script.replace("! ", "!... ")
     full_script = full_script.replace("? ", "?... ")
