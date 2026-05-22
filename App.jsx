@@ -100,6 +100,17 @@ const parseDeadlineMs = (deadlineStr) => {
   return null;
 };
 
+// Returns true if the deadline has already passed given the email's received time
+const isDeadlineExpired = (deadlineStr, emailDate) => {
+  if (!deadlineStr) return false;
+  const durationMs = parseDeadlineMs(deadlineStr);
+  if (!durationMs) return false;
+  const baseTime = emailDate
+    ? (typeof emailDate === 'number' ? emailDate : new Date(emailDate).getTime())
+    : Date.now();
+  return (baseTime + durationMs) < Date.now();
+};
+
 // Returns a short human label for the original deadline duration e.g. "12h", "2d", "30m"
 const formatDuration = (ms) => {
   if (!ms) return null;
@@ -485,7 +496,10 @@ const App = () => {
       return mails
         .filter(m => {
           const ai = aiResults[m.id];
-          return ai && (ai.priority === 'urgent' || ai.requires_reply);
+          if (!ai) return false;
+          // Exclude urgent emails whose deadline has already passed
+          if (ai.priority === 'urgent' && isDeadlineExpired(ai.deadline, m.internal_date)) return false;
+          return ai.priority === 'urgent' || ai.requires_reply;
         })
         .sort((a, b) => {
           const aiA = aiResults[a.id] || {};
