@@ -293,6 +293,9 @@ const App = () => {
   const [isFetchingStats, setIsFetchingStats] = useState(false);
   const [globalError, setGlobalError] = useState(null);
   const [profileImgError, setProfileImgError] = useState(false);
+  const [briefingTone, setBriefingTone] = useState(() => localStorage.getItem('mp_tone') || 'energetic');
+  const [whatsappNumber, setWhatsappNumber] = useState(() => localStorage.getItem('mp_wa') || '');
+  const [whatsappSaved, setWhatsappSaved] = useState(false);
 
   const audioRef = useRef(null);
 
@@ -439,7 +442,7 @@ const App = () => {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ emails: payload })
+        body: JSON.stringify({ emails: payload, tone: briefingTone })
       });
       
       if (!res.ok) throw new Error("Failed to generate briefing");
@@ -455,6 +458,21 @@ const App = () => {
     } finally {
       setIsGeneratingBriefing(false);
     }
+  };
+
+  const saveWhatsappNumber = async (number) => {
+    const token = localStorage.getItem('mp_token');
+    if (!token || !number.trim()) return;
+    localStorage.setItem('mp_wa', number.trim());
+    try {
+      await fetch(`${API_BASE}/user/settings`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whatsapp_number: number.trim() })
+      });
+    } catch (e) { /* non-critical */ }
+    setWhatsappSaved(true);
+    setTimeout(() => setWhatsappSaved(false), 2000);
   };
 
   const handleLogin = async () => {
@@ -1371,6 +1389,61 @@ const App = () => {
           </div>
 
           <div style={{ marginTop: 'auto', padding: '12px 8px' }}>
+            {/* Tone selector */}
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '8px' }}>Briefing Tone</div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {[
+                  { key: 'energetic', label: '⚡ Energetic' },
+                  { key: 'humorous', label: '😄 Humorous' },
+                  { key: 'calm',     label: '🧘 Calm' },
+                  { key: 'formal',   label: '🎩 Formal' },
+                ].map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => { setBriefingTone(t.key); localStorage.setItem('mp_tone', t.key); }}
+                    style={{
+                      padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
+                      cursor: 'pointer', border: '1px solid',
+                      borderColor: briefingTone === t.key ? 'var(--amber)' : 'var(--border-muted)',
+                      background: briefingTone === t.key ? 'rgba(255,159,10,0.15)' : 'transparent',
+                      color: briefingTone === t.key ? 'var(--amber)' : 'var(--text-secondary)',
+                      transition: 'all 0.15s',
+                    }}
+                  >{t.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* WhatsApp number */}
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '8px' }}>WhatsApp Number</div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={whatsappNumber}
+                  onChange={e => setWhatsappNumber(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveWhatsappNumber(whatsappNumber)}
+                  style={{
+                    flex: 1, padding: '6px 10px', borderRadius: '8px', fontSize: '12px',
+                    background: 'var(--bg)', border: '1px solid var(--border)',
+                    color: 'var(--text-primary)', outline: 'none', minWidth: 0,
+                  }}
+                />
+                <button
+                  onClick={() => saveWhatsappNumber(whatsappNumber)}
+                  style={{
+                    padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 700,
+                    background: whatsappSaved ? 'rgba(50,173,230,0.2)' : 'rgba(255,159,10,0.15)',
+                    border: `1px solid ${whatsappSaved ? '#32ADE6' : 'var(--amber)'}`,
+                    color: whatsappSaved ? '#32ADE6' : 'var(--amber)', cursor: 'pointer',
+                    transition: 'all 0.2s', whiteSpace: 'nowrap',
+                  }}
+                >{whatsappSaved ? '✓ Saved' : 'Save'}</button>
+              </div>
+            </div>
+
             <span className="sign-out" style={{ fontSize: '12px' }} onClick={handleLogout}>Sign out</span>
           </div>
         </aside>

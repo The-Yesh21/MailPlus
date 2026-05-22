@@ -312,17 +312,40 @@ def generate_voice_briefing(script: str) -> bytes:
 
 def phonetic_name_for_tts(raw: str) -> str:
     """
-    Map known Indian names to phoneme sequences that Kokoro's English model
-    pronounces correctly. We avoid hyphens (Kokoro ignores them) and instead
-    use spaced syllables that map to the right sounds.
+    Map known Indian names to phoneme sequences Kokoro's af_bella voice
+    actually pronounces correctly. Tested against Kokoro's English phoneme rules:
+    - 'Yaysh' → produces the 'Yesh' sound (ay+sh cluster works)
+    - 'wunth' → produces 'wanth' (u in closed syllable = short 'a' in Kokoro)
     """
     mapping = {
-        "yeshwanth": "Yesh wunt",
-        "yeshwant":  "Yesh wunt",
-        "yeshvanth": "Yesh wunt",
-        "yeshvanth": "Yesh wunt",
+        "yeshwanth": "Yaysh wunth",
+        "yeshwant":  "Yaysh wunth",
+        "yeshvanth": "Yaysh wunth",
     }
     return mapping.get(raw.strip().lower(), raw)
+
+
+def is_deadline_expired_backend(deadline_str: str, email_date_ms: int) -> bool:
+    """Return True if the deadline computed from email_date_ms has already passed."""
+    if not deadline_str or deadline_str in ("null", "None"):
+        return False
+    s = deadline_str.lower()
+    duration_ms = None
+    import re as _re
+    m = _re.search(r'(\d+)\s*(hour|minute|day|week)', s)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        multipliers = {"minute": 60_000, "hour": 3_600_000, "day": 86_400_000, "week": 604_800_000}
+        duration_ms = n * multipliers.get(unit, 0)
+    elif "tomorrow" in s:
+        duration_ms = 86_400_000
+    if not duration_ms:
+        return False
+    base = email_date_ms if email_date_ms else int(datetime.now(timezone.utc).timestamp() * 1000)
+    expires_at = base + duration_ms
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    return expires_at < now_ms
 
 
 def categorize_emails(emails: list, ai_results: dict) -> dict:
@@ -386,11 +409,32 @@ def categorize_emails(emails: list, ai_results: dict) -> dict:
 
 def build_briefing_prompt(name: str, total: int, urgent_emails: list,
                           reply_emails: list, top_emails: list,
-                          categories: dict) -> str:
+                          categories: dict, tone: str = "energetic") -> str:
     """
-    Build a rich Groq prompt that produces a structured, chief-of-staff style
-    morning briefing covering: overview, categories, action items, and thread continuity.
+    Build a rich Groq prompt for a structured, chief-of-staff style morning briefing.
+    Tone options: energetic | humorous | calm | formal
     """
+
+    tone_instructions = {
+        "energetic": (
+            "You are HYPED. Short punchy sentences. Lots of energy. Use exclamations naturally. "
+            "Make the user feel like they're about to crush the day. Think sports coach meets tech bro."
+        ),
+        "humorous": (
+            "You are witty and sarcastic like Grok. Dry humor, clever observations, light roasts of the inbox situation. "
+            "Still useful — the jokes serve the information, not the other way around. "
+            "Example: 'Internshala sent you 4 emails. They really believe in you. Or they're desperate. Probably both.'"
+        ),
+        "calm": (
+            "You are calm, measured, and reassuring. Like a wise assistant who has seen it all. "
+            "Smooth transitions, no exclamations, steady pace. Think NPR morning edition."
+        ),
+        "formal": (
+            "You are professional and precise. No jokes, no filler. Just clean, structured information delivery. "
+            "Think executive assistant briefing a CEO."
+        ),
+    }
+    tone_desc = tone_instructions.get(tone, tone_instructions["energetic"])
 
     # ── Overview numbers ──────────────────────────────────────────────────────
     deadline_count = sum(
@@ -444,30 +488,28 @@ def build_briefing_prompt(name: str, total: int, urgent_emails: list,
         top_lines += f"  {i+1}. {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {one}.\n"
 
     has_action = bool(urgent_emails or reply_emails)
-    has_categories = bool(work_block or career_block or finance_block)
 
-    return f"""You are MailPulse — an AI chief-of-staff delivering a spoken morning briefing.
-Your personality: sharp, witty, slightly like Grok — dry humor, direct, genuinely useful.
-You are generating a script for a text-to-speech voice agent.
+    return f"""You are MailPulse — an AI chief-of-staff delivering a spoken morning email briefing.
 
-STRICT RULES:
+TONE: {tone_desc}
+
+STRICT OUTPUT RULES:
 - User's name is "{name}". Use it 1-2 times naturally.
-- Output ONLY the spoken script. Zero markdown, zero bullet points, zero headers, zero asterisks.
-- Target 180-220 words — enough to be thorough but under 90 seconds spoken.
+- Output ONLY the spoken script. Zero markdown, zero bullet points, zero headers, zero asterisks, zero dashes.
+- Target 180-220 words — thorough but under 90 seconds spoken.
 - Natural spoken sentences. Use "..." for pauses between sections.
-- Be witty but never sacrifice clarity for a joke.
-- Structure the briefing in this exact order (skip a section only if it has no data):
+- Structure in this exact order (skip a section only if it has zero data):
   1. Quick 2-sentence overview: total emails, urgent count, reply count, deadline count.
-  2. Work/Projects highlights (if any).
-  3. Career/Learning highlights (if any).
-  4. Financial alerts (if any).
-  5. Action items — specific decisions or tasks needed, not just summaries.
-  6. Conversation continuity — mention if someone replied to an ongoing thread.
-  7. Energetic sign-off line.
+  2. Work/Projects highlights (if any) — mention specific senders and what they need.
+  3. Career/Learning highlights (if any) — internships, interviews, courses.
+  4. Financial alerts (if any) — payments due, subscriptions, bank alerts.
+  5. Action items — specific decisions or tasks, not vague summaries. Be direct: "Reply to X about Y", "Approve Z".
+  6. Conversation continuity — if someone replied to an ongoing thread, say what they said, not just that they replied.
+  7. Sign-off line matching the tone.
 
 INBOX DATA:
 Total emails: {total}
-Urgent: {len(urgent_emails)}
+Urgent (non-expired): {len(urgent_emails)}
 Need reply: {len(reply_emails)}
 Deadlines within 24h: {deadline_count}
 
@@ -481,7 +523,7 @@ Action items:
 Ongoing conversations:
 {thread_lines if thread_lines else "  No active threads."}
 
-{"Top emails (no urgent/action items today):" + chr(10) + top_lines if not has_action and top_lines else ""}
+{"Top emails (no urgent items today):" + chr(10) + top_lines if not has_action and top_lines else ""}
 
 Write the briefing script now:"""
 
@@ -491,11 +533,12 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     body = await request.json()
     emails = body.get("emails", [])
     user_email = user.get("email", "")
+    tone = body.get("tone", "energetic")
 
     if not emails:
         raise HTTPException(status_code=400, detail="No emails provided")
 
-    # Fetch AI results from Firestore (merge with any inline ai field from frontend)
+    # Fetch AI results from Firestore, merge with inline ai field from frontend
     ai_results = {}
     try:
         results_ref = fs.collection("email_ai").document(user_email).collection("results")
@@ -505,7 +548,6 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     except Exception as e:
         print(f"Error fetching AI results for briefing: {e}")
 
-    # Merge inline AI data sent from frontend into ai_results
     for e in emails:
         if e.get("ai") and e.get("id"):
             ai_results.setdefault(e["id"], e["ai"])
@@ -516,11 +558,18 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
 
     total = len(emails)
 
-    urgent_emails = [
-        {**e, "ai": ai_results.get(e.get("id"), {})}
-        for e in emails
-        if ai_results.get(e.get("id"), {}).get("priority") == "urgent"
-    ]
+    # Only include urgent emails whose deadline has NOT expired
+    urgent_emails = []
+    for e in emails:
+        ai = ai_results.get(e.get("id"), {})
+        if ai.get("priority") != "urgent":
+            continue
+        deadline = ai.get("deadline")
+        email_date = e.get("internal_date", 0)
+        if deadline and is_deadline_expired_backend(deadline, email_date):
+            continue  # deadline passed — not urgent anymore
+        urgent_emails.append({**e, "ai": ai})
+
     reply_emails = [
         {**e, "ai": ai_results.get(e.get("id"), {})}
         for e in emails
@@ -532,19 +581,17 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
         for e in emails[:5]
     ]
 
-    # Categorize all emails
     categories = categorize_emails(emails, ai_results)
 
-    # Generate script via Groq
     prompt = build_briefing_prompt(
-        phonetic_name, total, urgent_emails, reply_emails, top_emails, categories
+        phonetic_name, total, urgent_emails, reply_emails, top_emails, categories, tone
     )
     loop = asyncio.get_event_loop()
     raw_script = await loop.run_in_executor(
         None,
         partial(call_groq, prompt,
-                "You are a witty AI voice assistant delivering a morning briefing. "
-                "Output only the spoken script — no markdown, no bullet points, no headers.",
+                "You are a voice assistant delivering a morning briefing. "
+                "Output ONLY the spoken script — no markdown, no bullet points, no headers, no asterisks.",
                 500)
     )
 
@@ -607,6 +654,25 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
 async def generate_morning_briefing(request: Request, user=Depends(get_current_user)):
     # Redirect to the new voice generation endpoint logic for backward compatibility
     return await generate_voice_endpoint(request, user)
+
+
+@app.post("/user/settings")
+async def save_user_settings(request: Request, user=Depends(get_current_user)):
+    """Save user preferences (WhatsApp number, tone, etc.) to Firestore."""
+    body = await request.json()
+    user_email = user.get("email", "")
+    try:
+        update = {}
+        if "whatsapp_number" in body:
+            update["whatsapp_number"] = body["whatsapp_number"]
+        if "briefing_tone" in body:
+            update["briefing_tone"] = body["briefing_tone"]
+        if update:
+            fs.collection("user_stats").document(user_email).set(update, merge=True)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"Settings save error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
 
 @app.get("/health")
