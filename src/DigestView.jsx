@@ -842,6 +842,120 @@ const DIGEST_CSS = `
     }
   }
 
+  @media (max-width: 560px) {
+    .digest-wrap {
+      min-width: 0;
+    }
+    .digest-scroll {
+      padding: 18px 14px 46px;
+    }
+    .digest-title {
+      font-size: clamp(40px, 14vw, 56px);
+    }
+    .digest-tagline,
+    .ai-subcopy,
+    .digest-hero-summary {
+      font-size: 14px;
+      line-height: 1.62;
+    }
+    .digest-meta-card,
+    .ai-banner,
+    .digest-hero,
+    .digest-intel-card,
+    .digest-bcard,
+    .digest-fyi-strip {
+      border-radius: 18px;
+    }
+    .digest-meta-row,
+    .digest-stats {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .digest-mini-stat,
+    .digest-chip {
+      width: 100%;
+      justify-content: center;
+      text-align: center;
+    }
+    .ai-signal-grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .ai-signal {
+      padding: 12px;
+    }
+    .digest-hero {
+      padding: 18px;
+    }
+    .digest-hero-foot {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .digest-review-btn {
+      justify-content: center;
+      min-height: 42px;
+    }
+    .digest-card-top {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .digest-card-sender {
+      max-width: 100%;
+      text-align: left;
+    }
+    .digest-bcard {
+      gap: 12px;
+      padding: 14px;
+    }
+    .digest-fyi-strip {
+      align-items: stretch;
+    }
+    .digest-fyi-pill,
+    .digest-fyi-more {
+      justify-content: center;
+      min-height: 38px;
+    }
+    .digest-panel-inner {
+      padding: 18px 16px 28px;
+    }
+    .digest-panel-hl {
+      font-size: 22px;
+    }
+  }
+
+  @media (max-width: 390px) {
+    .digest-scroll {
+      padding-inline: 11px;
+    }
+    .digest-masthead {
+      padding-top: 2px;
+    }
+    .digest-edition,
+    .ai-kicker,
+    .digest-sec-label {
+      letter-spacing: 0.14em;
+    }
+    .ai-signal-grid {
+      grid-template-columns: 1fr;
+    }
+    .chip-popover {
+      width: calc(100vw - 22px);
+    }
+    .chip-popover-item {
+      align-items: flex-start;
+    }
+    .chip-popover-time {
+      display: none;
+    }
+    .digest-panel-close,
+    .digest-analyze-btn,
+    .digest-copy-btn {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .digest-wrap *, .digest-wrap *::before, .digest-wrap *::after {
       animation: none !important;

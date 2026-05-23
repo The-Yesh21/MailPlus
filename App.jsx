@@ -1328,6 +1328,356 @@ const App = () => {
           .slide-in { animation: slideIn 0.3s ease-out; }
           @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
+          button, .nav-item, .mail-row, .digest-card, .badge-chip, .open-gmail, .sign-out, .play-circle {
+            -webkit-tap-highlight-color: transparent;
+          }
+
+          button:focus-visible,
+          a:focus-visible,
+          .nav-item:focus-visible,
+          .mail-row:focus-visible {
+            outline: 2px solid rgba(255,159,10,0.72);
+            outline-offset: 3px;
+          }
+
+          .hamburger {
+            width: 44px;
+            height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.045);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            color: var(--text-primary);
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+            transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+          }
+          .hamburger:hover {
+            transform: translateY(-1px);
+            border-color: rgba(255,159,10,0.32);
+            background: rgba(255,159,10,0.08);
+          }
+
+          .digest-card,
+          .badge-chip,
+          .card,
+          .panel {
+            transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+          }
+          .digest-card:hover,
+          .badge-chip:hover,
+          .card:hover,
+          .panel:hover {
+            border-color: rgba(255,255,255,0.12);
+          }
+          .card:hover,
+          .panel:hover {
+            box-shadow: 0 14px 36px rgba(0,0,0,0.22);
+          }
+          .btn-send,
+          .btn-sec,
+          .scan-now,
+          .whatsapp-btn,
+          .open-gmail {
+            transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
+          }
+          .btn-send:hover,
+          .scan-now:hover:not(:disabled),
+          .whatsapp-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 26px rgba(0,0,0,0.22);
+          }
+          .btn-send:active,
+          .btn-sec:active,
+          .scan-now:active,
+          .whatsapp-btn:active,
+          .mail-row:active,
+          .nav-item:active {
+            transform: scale(0.99);
+          }
+
+          @media (max-width: 1180px) {
+            .sidebar { width: 220px; padding: 20px 12px; }
+            .mail-list { width: clamp(300px, 32vw, 360px); }
+            .dashboard-row { grid-template-columns: 1fr; }
+            .analytics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .detail-header { padding: 22px 24px; }
+            .detail-content { padding: 24px; }
+            .voice-bar { padding: 14px 24px; gap: 16px; }
+          }
+
+          @media (max-width: 980px) {
+            .app-container { flex-direction: column; }
+            .mobile-header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              min-height: 66px;
+              padding: 12px 16px;
+              background: rgba(5,5,5,0.78);
+              backdrop-filter: blur(24px);
+              -webkit-backdrop-filter: blur(24px);
+              border-bottom: 1px solid var(--border);
+              z-index: 80;
+              flex-shrink: 0;
+            }
+            .mobile-header-title {
+              font-family: var(--font-serif);
+              font-size: 25px;
+              font-weight: 500;
+              color: var(--text-primary);
+            }
+            .sidebar {
+              position: absolute;
+              top: 0;
+              left: 0;
+              bottom: 0;
+              z-index: 100;
+              width: min(330px, 86vw);
+              transform: translateX(-100%);
+              transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+              background:
+                radial-gradient(circle at 30% 0%, rgba(59,130,246,0.12), transparent 38%),
+                rgba(5, 5, 5, 0.96);
+              padding: 20px 16px;
+            }
+            .sidebar.open { transform: translateX(0); box-shadow: 16px 0 48px rgba(0,0,0,0.72); }
+            .mobile-overlay {
+              display: block;
+              position: absolute;
+              inset: 0;
+              background: rgba(0,0,0,0.56);
+              backdrop-filter: blur(6px);
+              z-index: 90;
+              opacity: 0;
+              pointer-events: none;
+              transition: opacity 0.25s ease;
+            }
+            .mobile-overlay.show { opacity: 1; pointer-events: auto; }
+            .dashboard-container,
+            .mail-list,
+            .digest-wrap {
+              height: calc(100vh - 66px);
+            }
+            .dashboard-container {
+              width: 100%;
+              padding: 20px;
+              overflow-y: auto;
+              gap: 22px;
+            }
+            .mail-list {
+              width: 100%;
+              flex: 1;
+              min-height: 0;
+              border-right: none;
+            }
+            .list-topbar {
+              padding: 16px;
+              gap: 14px;
+              background: rgba(5,5,5,0.74);
+              backdrop-filter: blur(18px);
+            }
+            .list-title { font-size: 26px; }
+            .scan-now {
+              min-height: 42px;
+              padding: 9px 14px;
+              border-radius: 12px;
+            }
+            .mail-row {
+              min-height: 104px;
+              padding: 18px 16px;
+            }
+            .detail-panel {
+              position: absolute;
+              top: 66px;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              width: 100%;
+              height: calc(100vh - 66px);
+              z-index: 60;
+              background: var(--bg);
+              transform: translateX(100%);
+              transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            }
+            .detail-panel.active { transform: translateX(0); }
+            .mobile-back-btn {
+              display: inline-flex;
+              align-items: center;
+              gap: 8px;
+              min-height: 40px;
+              padding: 8px 14px;
+              margin: 14px 16px 0;
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 999px;
+              color: var(--text-primary);
+              font-size: 13px;
+              font-weight: 700;
+              cursor: pointer;
+            }
+            .detail-header {
+              padding: 18px 16px;
+              gap: 16px;
+              flex-direction: column;
+            }
+            .open-gmail {
+              width: 100%;
+              min-height: 40px;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .detail-subject {
+              font-size: clamp(24px, 6vw, 34px);
+            }
+            .detail-content {
+              padding: 18px 16px 130px;
+              gap: 18px;
+            }
+            .voice-bar {
+              position: sticky;
+              bottom: 0;
+              flex-wrap: wrap;
+              padding: 14px 16px;
+              gap: 12px;
+              background: rgba(22,27,34,0.92);
+              backdrop-filter: blur(18px);
+            }
+            .waveform {
+              order: 4;
+              width: 100%;
+              flex-basis: 100%;
+            }
+            .whatsapp-btn {
+              margin-left: auto;
+              min-height: 40px;
+            }
+          }
+
+          @media (max-width: 680px) {
+            .analytics-grid,
+            .progress-grid {
+              grid-template-columns: 1fr;
+            }
+            .dashboard-container {
+              padding: 16px;
+            }
+            .stat-card,
+            .panel,
+            .card {
+              border-radius: 16px;
+              padding: 18px;
+            }
+            .stat-value {
+              font-size: 30px;
+            }
+            .badge-strip {
+              display: flex;
+              flex-wrap: wrap;
+            }
+            .badge-chip {
+              min-height: 32px;
+            }
+            .btn-row {
+              flex-direction: column;
+            }
+            .btn-send,
+            .btn-sec {
+              width: 100%;
+              min-height: 42px;
+            }
+            .deadline-chip {
+              width: 100%;
+              justify-content: center;
+              flex-wrap: wrap;
+              text-align: center;
+            }
+            .sender-avatar {
+              width: 42px;
+              height: 42px;
+              font-size: 17px;
+            }
+            .row-line1 {
+              gap: 10px;
+            }
+            .row-sender {
+              min-width: 0;
+            }
+            .voice-bar {
+              align-items: center;
+            }
+            .briefing-meta {
+              min-width: 0;
+              flex: 1;
+            }
+            .whatsapp-btn {
+              width: 100%;
+              justify-content: center;
+              order: 5;
+            }
+          }
+
+          @media (max-width: 420px) {
+            .mobile-header {
+              min-height: 60px;
+              padding: 10px 12px;
+            }
+            .mobile-header-title { font-size: 23px; }
+            .hamburger { width: 40px; height: 40px; border-radius: 12px; }
+            .dashboard-container,
+            .mail-list,
+            .digest-wrap {
+              height: calc(100vh - 60px);
+            }
+            .detail-panel {
+              top: 60px;
+              height: calc(100vh - 60px);
+            }
+            .list-topbar {
+              align-items: stretch;
+              flex-direction: column;
+            }
+            .scan-now {
+              width: 100%;
+              justify-content: center;
+            }
+            .profile-name,
+            .profile-email {
+              max-width: 180px;
+            }
+            .digest-cards {
+              grid-template-columns: 1fr;
+            }
+            .mail-row {
+              padding: 16px 14px;
+            }
+            .detail-content {
+              padding-inline: 14px;
+            }
+            .card-label {
+              align-items: flex-start;
+              line-height: 1.45;
+            }
+            .draft-text {
+              font-size: 13px;
+              padding: 14px;
+            }
+            .global-error-panel {
+              left: 12px;
+              right: 12px;
+              transform: translateY(-50%);
+            }
+            .global-error-panel .error-panel {
+              max-width: none;
+              width: 100%;
+              padding: 24px;
+            }
+          }
+
           @media (prefers-reduced-motion: reduce) {
             * { animation: none !important; transition: none !important; }
           }
