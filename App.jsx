@@ -279,6 +279,7 @@ const App = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [analyzingIds, setAnalyzingIds] = useState(new Set());
+  const [sendingReplyIds, setSendingReplyIds] = useState(new Set());
   const [dashboardStats, setDashboardStats] = useState({
     total_emails: 0,
     unread_emails: 0,
@@ -660,6 +661,55 @@ const App = () => {
       }
     } catch (error) {
       console.warn("Unable to mark email as read in Gmail:", error);
+    }
+  };
+
+  const sendDraftReply = async (mail) => {
+    if (!mail) return;
+    const draft = aiResults[mail.id]?.draft_reply?.trim();
+    if (!draft) {
+      alert("Generate a draft reply first.");
+      return;
+    }
+
+    const recipient = mail.from_email || mail.from_name || "this sender";
+    const confirmed = window.confirm(
+      `Send this reply to ${recipient}?\n\nSubject: Re: ${decodeHtmlEntities(mail.subject || "No Subject")}\n\n${draft}`
+    );
+    if (!confirmed) return;
+
+    const token = localStorage.getItem('mp_token');
+    if (!token) return;
+
+    setSendingReplyIds(prev => new Set(prev).add(mail.id));
+    try {
+      const response = await fetch(`${API_BASE}/emails/${mail.id}/reply`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ reply_text: draft })
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || "Send reply failed");
+      }
+      setStatsData(prev => ({
+        ...prev,
+        replies_drafted: (prev.replies_drafted || 0) + 1
+      }));
+      markEmailAsRead(mail.id);
+      alert("Reply sent in Gmail.");
+    } catch (error) {
+      console.error("Failed to send reply:", error);
+      alert("Could not send the reply. If you just updated permissions, sign out and sign in again.");
+    } finally {
+      setSendingReplyIds(prev => {
+        const next = new Set(prev);
+        next.delete(mail.id);
+        return next;
+      });
     }
   };
 
@@ -2300,7 +2350,13 @@ const App = () => {
                       <>
                         <div className="draft-text">{aiResults[selectedMail.id].draft_reply}</div>
                         <div className="btn-row">
-                          <button className="btn-send">Send reply</button>
+                          <button
+                            className="btn-send"
+                            onClick={() => sendDraftReply(selectedMail)}
+                            disabled={sendingReplyIds.has(selectedMail.id)}
+                          >
+                            {sendingReplyIds.has(selectedMail.id) ? "Sending..." : "Send reply"}
+                          </button>
                           <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
                           <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply)}>Copy</button>
                         </div>

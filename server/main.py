@@ -888,6 +888,93 @@ async def mark_email_read(message_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/emails/{message_id}/reply")
+async def send_email_reply(message_id: str, request: Request, user=Depends(get_current_user)):
+    body = await request.json()
+    reply_text = (body.get("reply_text") or "").strip()
+    if not reply_text:
+        raise HTTPException(status_code=400, detail="reply_text_required")
+
+    try:
+        access_token = user["access_token"]
+        user_email = user.get("email", "")
+
+        async with httpx.AsyncClient() as client:
+            original_resp = await client.get(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={
+                    "format": "metadata",
+                    "metadataHeaders": ["Subject", "From", "Message-ID", "References"],
+                },
+            )
+            if original_resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="token_expired")
+            if original_resp.status_code >= 400:
+                raise HTTPException(status_code=original_resp.status_code, detail=original_resp.text)
+
+            original = original_resp.json()
+            headers = original.get("payload", {}).get("headers", [])
+
+            def header_value(name, default=""):
+                return next(
+                    (h.get("value", "") for h in headers if h.get("name", "").lower() == name.lower()),
+                    default,
+                )
+
+            subject = header_value("Subject", "No Subject")
+            from_header = header_value("From", "")
+            references = header_value("References", "")
+            original_message_id = header_value("Message-ID", "")
+            _, to_email = parse_from(from_header)
+
+            if not to_email:
+                raise HTTPException(status_code=400, detail="missing_recipient")
+
+            reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            message = EmailMessage()
+            message["To"] = to_email
+            message["Subject"] = reply_subject
+            if original_message_id:
+                message["In-Reply-To"] = original_message_id
+                message["References"] = f"{references} {original_message_id}".strip()
+            message.set_content(reply_text)
+
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+            send_resp = await client.post(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"raw": raw, "threadId": original.get("threadId")},
+            )
+            if send_resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="token_expired")
+            if send_resp.status_code in (400, 403):
+                raise HTTPException(
+                    status_code=send_resp.status_code,
+                    detail="gmail_send_permission_required",
+                )
+            if send_resp.status_code >= 400:
+                raise HTTPException(status_code=send_resp.status_code, detail=send_resp.text)
+            sent = send_resp.json()
+
+        increment_user_stats(user_email, replies=1)
+        return {
+            "status": "sent",
+            "id": sent.get("id"),
+            "threadId": sent.get("threadId", original.get("threadId")),
+            "to": to_email,
+            "subject": reply_subject,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Send reply error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/dashboard/stats")
 async def get_dashboard_stats(user=Depends(get_current_user)):
     try:
