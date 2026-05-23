@@ -602,6 +602,7 @@ const App = () => {
   const fetchFullEmail = async (id) => {
     if (!id) return;
     const token = localStorage.getItem('mp_token');
+    markEmailAsRead(id);
     setIsFetchingBody(true);
     try {
       const response = await fetch(`${API_BASE}/emails/${id}`, {
@@ -616,6 +617,49 @@ const App = () => {
       console.error("Failed to fetch full email:", error);
     } finally {
       setIsFetchingBody(false);
+    }
+  };
+
+  const markEmailAsRead = async (id) => {
+    if (!id) return;
+    const mail = mails.find(m => m.id === id);
+    if (!mail || mail.is_read) return;
+
+    const token = localStorage.getItem('mp_token');
+    if (!token) return;
+
+    const applyReadState = (items) => items.map(m => {
+      if (m.id !== id) return m;
+      return {
+        ...m,
+        is_read: true,
+        labels: (m.labels || []).filter(label => label !== 'UNREAD')
+      };
+    });
+
+    setMails(prev => {
+      const next = applyReadState(Array.isArray(prev) ? prev : []);
+      if (user?.email) {
+        localStorage.setItem(`mp_mails_${user.email}`, JSON.stringify(next));
+      }
+      return next;
+    });
+    setDashboardStats(prev => ({
+      ...prev,
+      unread_emails: Math.max(0, (prev?.unread_emails || 0) - 1)
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE}/emails/${id}/mark-read`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        console.warn("Gmail mark-as-read failed:", detail);
+      }
+    } catch (error) {
+      console.warn("Unable to mark email as read in Gmail:", error);
     }
   };
 
@@ -2012,6 +2056,7 @@ const App = () => {
             aiResults={aiResults}
             analyzingIds={analyzingIds}
             analyzeEmail={analyzeEmail}
+            markEmailAsRead={markEmailAsRead}
             DeadlineCountdown={DeadlineCountdown}
             isDeadlineExpired={isDeadlineExpired}
           />
@@ -2058,7 +2103,10 @@ const App = () => {
                     <div 
                       key={mail.id} 
                       className={`mail-row ${selectedMailId === mail.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedMailId(mail.id)}
+                      onClick={() => {
+                        setSelectedMailId(mail.id);
+                        markEmailAsRead(mail.id);
+                      }}
                     >
                       <div 
                         className="priority-dot" 

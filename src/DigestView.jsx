@@ -997,7 +997,7 @@ const getTimeLabel = (mail) => {
   return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCountdown, isDeadlineExpired }) => {
+const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, markEmailAsRead, DeadlineCountdown, isDeadlineExpired }) => {
   const [sel, setSel] = useState(null);
   const [activeChip, setActiveChip] = useState(null);
   const [fyiExpanded, setFyiExpanded] = useState(false);
@@ -1084,6 +1084,7 @@ const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, DeadlineCoun
   const selAi = selMail ? aiResults[selMail.id] : null;
   const open = (id) => {
     setSel((prev) => (prev === id ? null : id));
+    markEmailAsRead?.(id);
     setActiveChip(null);
   };
   const priorityColor = (priority) => {

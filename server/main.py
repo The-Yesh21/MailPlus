@@ -8,6 +8,7 @@ import base64
 import re
 from functools import partial
 import html
+from email.message import EmailMessage
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, Query
@@ -62,7 +63,8 @@ GROQ_API_KEY         = os.getenv("GROQ_API_KEY")
 HF_TOKEN             = os.getenv("HF_TOKEN")
 ALGORITHM            = "HS256"
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid"
@@ -849,6 +851,42 @@ async def get_email(message_id: str, user=Depends(get_current_user)):
 
 
 # ── Dashboard stats ───────────────────────────────────────────────────────────
+
+@app.post("/emails/{message_id}/mark-read")
+async def mark_email_read(message_id: str, user=Depends(get_current_user)):
+    try:
+        access_token = user["access_token"]
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"removeLabelIds": ["UNREAD"]},
+            )
+            if resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="token_expired")
+            if resp.status_code in (400, 403):
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail="gmail_modify_permission_required",
+                )
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            data = resp.json()
+        return {
+            "status": "ok",
+            "id": data.get("id", message_id),
+            "labels": data.get("labelIds", []),
+            "is_read": "UNREAD" not in data.get("labelIds", []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Mark read error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/dashboard/stats")
 async def get_dashboard_stats(user=Depends(get_current_user)):
