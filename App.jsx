@@ -783,15 +783,18 @@ const App = () => {
           /* Sidebar */
           .sidebar {
             width: 240px;
-            background: rgba(13, 17, 23, 0.4);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-right: 1px solid var(--border);
+            background:
+              radial-gradient(circle at 30% 0%, rgba(59,130,246,0.08), transparent 38%),
+              linear-gradient(180deg, rgba(13, 17, 23, 0.76), rgba(5, 8, 18, 0.82));
+            backdrop-filter: blur(28px);
+            -webkit-backdrop-filter: blur(28px);
+            border-right: 1px solid rgba(255,255,255,0.075);
             display: flex;
             flex-direction: column;
             padding: 24px 16px;
             flex-shrink: 0;
             overflow-y: auto;
+            box-shadow: 18px 0 50px rgba(0,0,0,0.18), inset -1px 0 0 rgba(255,255,255,0.03);
           }
 
           .user-info {
@@ -830,27 +833,64 @@ const App = () => {
           .digest-val { font-size: 28px; font-weight: 600; display: block; }
           .digest-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
 
-          .nav-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 2px; margin: 16px 0 8px 8px; font-weight: 700; }
+          .nav-label {
+            font-size: 10px;
+            color: rgba(156,163,175,0.76);
+            text-transform: uppercase;
+            letter-spacing: 2.4px;
+            margin: 18px 0 9px 8px;
+            font-weight: 800;
+          }
           .nav-item {
             display: flex;
             align-items: center;
             gap: 12px;
+            min-height: 40px;
             padding: 10px 12px;
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 13px;
             color: var(--text-secondary);
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background 0.22s ease, color 0.22s ease, transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
             margin-bottom: 4px;
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
           }
-          .nav-item:hover { background: var(--surface); color: var(--text-primary); }
+          .nav-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 999px;
+            background: transparent;
+            transition: background 0.22s ease, box-shadow 0.22s ease;
+          }
+          .nav-item:hover {
+            background: rgba(255,255,255,0.045);
+            color: var(--text-primary);
+            transform: translateX(1px);
+            border-color: rgba(255,255,255,0.055);
+          }
           .nav-item.active {
-            background: var(--surface);
-            border-left: 3px solid var(--amber);
-            color: var(--amber);
-            font-weight: 500;
+            background: linear-gradient(135deg, rgba(59,130,246,0.13), rgba(212,163,115,0.06));
+            border-color: rgba(59,130,246,0.22);
+            color: #F3F4F6;
+            font-weight: 700;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.18), 0 0 28px rgba(59,130,246,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
           }
-          .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+          .nav-item.active::before {
+            background: #3B82F6;
+            box-shadow: 0 0 18px rgba(59,130,246,0.65);
+          }
+          .nav-icon {
+            font-size: 16px;
+            width: 22px;
+            text-align: center;
+            filter: drop-shadow(0 0 10px rgba(59,130,246,0.18));
+          }
 
           /* Dashboard Styles */
           .dashboard-container {

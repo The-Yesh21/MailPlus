@@ -351,7 +351,7 @@ def is_deadline_expired_backend(deadline_str: str, email_date_ms: int) -> bool:
 def categorize_emails(emails: list, ai_results: dict) -> dict:
     """
     Categorize emails into work/career/finance/action/thread buckets.
-    Returns a dict with lists for each category.
+    Expired-deadline emails are excluded from action_items and category highlights.
     """
     work_keywords    = ["github", "deploy", "api", "server", "pull request", "merge", "build",
                         "project", "sprint", "jira", "slack", "meeting", "standup", "review",
@@ -373,21 +373,27 @@ def categorize_emails(emails: list, ai_results: dict) -> dict:
             threads[tid] = []
         threads[tid].append(e)
 
-    # Multi-email threads (conversation continuity candidates)
-    thread_convos = [
-        msgs for msgs in threads.values()
-        if len(msgs) > 1
-    ]
+    thread_convos = [msgs for msgs in threads.values() if len(msgs) > 1]
 
     for e in emails:
-        ai  = ai_results.get(e.get("id"), {}) or e.get("ai") or {}
-        subj = (e.get("subject") or "").lower()
-        snip = (e.get("snippet") or "").lower()
-        text = f"{subj} {snip}"
+        ai       = ai_results.get(e.get("id"), {}) or e.get("ai") or {}
+        subj     = (e.get("subject") or "").lower()
+        snip     = (e.get("snippet") or "").lower()
+        text     = f"{subj} {snip}"
+        deadline = ai.get("deadline")
+        email_date = e.get("internal_date", 0)
 
-        # Action items — things that need a decision or action
-        draft = ai.get("draft_reply", "") or ""
-        reason = ai.get("reason", "") or ""
+        # If this email has a deadline that has already passed, skip it entirely
+        # from action items and category highlights — it's stale news
+        deadline_expired = (
+            deadline and
+            deadline not in ("null", "None") and
+            is_deadline_expired_backend(deadline, email_date)
+        )
+        if deadline_expired:
+            continue  # don't surface in any section of the briefing
+
+        # Action items — things that still need a decision or action
         if ai.get("requires_reply") or ai.get("priority") == "urgent":
             action_items.append({**e, "ai": ai})
 
@@ -399,10 +405,10 @@ def categorize_emails(emails: list, ai_results: dict) -> dict:
             work.append({**e, "ai": ai})
 
     return {
-        "work":         work[:4],
-        "career":       career[:4],
-        "finance":      finance[:3],
-        "action_items": action_items[:5],
+        "work":          work[:4],
+        "career":        career[:4],
+        "finance":       finance[:3],
+        "action_items":  action_items[:5],
         "thread_convos": thread_convos[:3],
     }
 
@@ -465,7 +471,12 @@ def build_briefing_prompt(name: str, total: int, urgent_emails: list,
         reason = ai.get("reason") or ai.get("summary", "")
         one = reason.split(".")[0] if reason else e.get("snippet", "")[:60]
         deadline = ai.get("deadline")
-        dl = f" (deadline: {deadline})" if deadline and deadline not in ("null","None") else ""
+        email_date = e.get("internal_date", 0)
+        # Only show deadline if it hasn't passed yet
+        if deadline and deadline not in ("null", "None") and not is_deadline_expired_backend(deadline, email_date):
+            dl = f" (deadline: {deadline})"
+        else:
+            dl = ""
         action_lines += f"  - {e.get('from_name','Someone')}: {e.get('subject','(no subject)')} — {one}{dl}.\n"
 
     # ── Conversation continuity ───────────────────────────────────────────────
