@@ -233,6 +233,25 @@ const decodeHtmlEntities = (text) => {
   return textarea.value;
 };
 
+const renderFormattedDraft = (text) => {
+  if (!text) return null;
+  return text.split(/\n\s*\n/).filter(Boolean).map((paragraph, paragraphIndex) => (
+    <p key={`p-${paragraphIndex}`}>
+      {paragraph.split('\n').map((line, lineIndex) => (
+        <React.Fragment key={`l-${paragraphIndex}-${lineIndex}`}>
+          {line.split(/(\*\*.*?\*\*)/g).filter(Boolean).map((part, partIndex) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <strong key={`b-${paragraphIndex}-${lineIndex}-${partIndex}`}>{part.slice(2, -2)}</strong>;
+            }
+            return <React.Fragment key={`t-${paragraphIndex}-${lineIndex}-${partIndex}`}>{part}</React.Fragment>;
+          })}
+          {lineIndex < paragraph.split('\n').length - 1 && <br />}
+        </React.Fragment>
+      ))}
+    </p>
+  ));
+};
+
 const ErrorBoundary = ({ children }) => {
   const [hasError, setHasError] = useState(false);
   
@@ -673,8 +692,9 @@ const App = () => {
     }
 
     const recipient = mail.from_email || mail.from_name || "this sender";
+    const plainDraft = draft.replace(/\*\*(.*?)\*\*/g, '$1');
     const confirmed = window.confirm(
-      `Send this reply to ${recipient}?\n\nSubject: Re: ${decodeHtmlEntities(mail.subject || "No Subject")}\n\n${draft}`
+      `Send this reply to ${recipient}?\n\nSubject: Re: ${decodeHtmlEntities(mail.subject || "No Subject")}\n\n${plainDraft}`
     );
     if (!confirmed) return;
 
@@ -1331,6 +1351,16 @@ const App = () => {
             font-size: 14px; line-height: 1.6; color: var(--text-primary);
             background: var(--bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-muted);
             margin-bottom: 16px; white-space: pre-wrap;
+          }
+          .draft-text p {
+            margin: 0 0 12px;
+          }
+          .draft-text p:last-child {
+            margin-bottom: 0;
+          }
+          .draft-text strong {
+            color: #FFD28A;
+            font-weight: 800;
           }
           .draft-placeholder { color: var(--text-secondary); font-style: italic; }
 
@@ -2348,7 +2378,7 @@ const App = () => {
                     </div>
                     {aiResults[selectedMail.id]?.draft_reply ? (
                       <>
-                        <div className="draft-text">{aiResults[selectedMail.id].draft_reply}</div>
+                        <div className="draft-text">{renderFormattedDraft(aiResults[selectedMail.id].draft_reply)}</div>
                         <div className="btn-row">
                           <button
                             className="btn-send"

@@ -222,6 +222,24 @@ def parse_priority_json(raw: str) -> dict:
 
 # ── Groq Hybrid Engine ──────────────────────────────────────────────────────
 
+def format_reply_bodies(reply_text: str) -> tuple[str, str]:
+    plain_text = re.sub(r'\*\*(.*?)\*\*', r'\1', reply_text).strip()
+    escaped = html.escape(reply_text.strip())
+    escaped = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', escaped)
+    paragraphs = [
+        paragraph.strip().replace("\n", "<br>")
+        for paragraph in re.split(r'\n\s*\n', escaped)
+        if paragraph.strip()
+    ]
+    html_body = (
+        "<div style=\"font-family: Arial, sans-serif; font-size: 14px; "
+        "line-height: 1.6; color: #111827;\">"
+        + "".join(f"<p style=\"margin: 0 0 12px;\">{paragraph}</p>" for paragraph in paragraphs)
+        + "</div>"
+    )
+    return plain_text, html_body
+
+
 def call_groq(prompt: str, system: str, max_tokens: int = 400) -> str:
     for attempt in range(3):
         try:
@@ -253,8 +271,15 @@ def build_prompt(from_name, subject, body_preview):
   "reason": "one sentence why",
   "requires_reply": true or false,
   "summary": "exactly 2 sentences about what this email is and what action is needed",
-  "draft_reply": "3 sentence professional reply signed as Yeshwanth"
+  "draft_reply": "a complete professional reply email, not a summary. Use greeting, concise body, and closing signed as Yeshwanth. Use line breaks between paragraphs. Use **bold** only around important commitments, deadlines, blockers, requested actions, or decisions that need attention."
 }}
+
+Draft reply rules:
+- Reply directly to the sender's request. Do not describe the email or say it is waiting for a response.
+- Do not invent facts. If information is unavailable, acknowledge it professionally and commit to checking or sharing an update.
+- Keep it concise but complete: 2-4 short paragraphs.
+- Use **bold** sparingly for attention points such as **by tomorrow**, **project update**, **required details**, or **next steps**.
+- Never use bullet points unless the original email asks for multiple items.
 
 From: {from_name}
 Subject: {subject}
@@ -262,7 +287,7 @@ Preview: {body_preview[:400]}"""
 
 def analyze_email_hf(from_name, subject, body_preview):
     # Despite the name 'analyze_email_hf' used by other endpoints, we use Groq + Regex here
-    raw = call_groq(build_prompt(from_name, subject, body_preview), "You are an email assistant. Reply only with valid JSON.", 400)
+    raw = call_groq(build_prompt(from_name, subject, body_preview), "You are an email assistant. Reply only with valid JSON.", 700)
     data = parse_priority_json(raw)
     
     # 1. Deterministic Deadline Parsing (Overrides AI Hallucinations)
@@ -938,7 +963,9 @@ async def send_email_reply(message_id: str, request: Request, user=Depends(get_c
             if original_message_id:
                 message["In-Reply-To"] = original_message_id
                 message["References"] = f"{references} {original_message_id}".strip()
-            message.set_content(reply_text)
+            plain_reply, html_reply = format_reply_bodies(reply_text)
+            message.set_content(plain_reply)
+            message.add_alternative(html_reply, subtype="html")
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
             send_resp = await client.post(
