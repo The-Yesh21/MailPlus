@@ -31,6 +31,7 @@ from firebase_admin import credentials as fb_credentials, firestore as fb_firest
 load_dotenv()
 
 kokoro_pipeline = None
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def get_kokoro_pipeline():
     global kokoro_pipeline
@@ -240,24 +241,33 @@ def format_reply_bodies(reply_text: str) -> tuple[str, str]:
     return plain_text, html_body
 
 
-def call_groq(prompt: str, system: str, max_tokens: int = 400) -> str:
-    for attempt in range(3):
+def call_groq(prompt: str, system: str, max_tokens: int = 300):
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
             client = Groq(api_key=GROQ_API_KEY)
-            comp = client.chat.completions.create(
+            completion = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
-                messages=[{"role": "system", "content": system},
-                          {"role": "user",   "content": prompt}],
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=0.3,
                 max_completion_tokens=max_tokens,
-                top_p=1, stream=False, stop=None
+                top_p=1,
+                stream=False,
+                stop=None
             )
-            content = comp.choices[0].message.content
+            content = completion.choices[0].message.content
+            if not isinstance(content, str):
+                return None
             return content.strip() if content else None
         except Exception as e:
-            if '429' in str(e):
-                import time
+            import time
+            error_str = str(e)
+            if '429' in error_str:
                 wait = 2 * (attempt + 1)
+                print(f"Rate limit, waiting {wait}s")
                 time.sleep(wait)
                 continue
             print(f"Groq error: {e}")
@@ -1073,40 +1083,59 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 
     loop = asyncio.get_event_loop()
     try:
-        data = await loop.run_in_executor(
-            None,
-            partial(analyze_email_hf, from_name, subject, body_preview)
-        )
+        combined_prompt = f"""Analyze this email. Reply with ONLY a valid 
+JSON object, no markdown, no explanation, no extra text:
+{{
+  "priority": "urgent" or "normal" or "low",
+  "reason": "one sentence why",
+  "deadline": "deadline phrase or null",
+  "requires_reply": true or false,
+  "summary": "exactly 2 sentences about what this email is about and what action is needed",
+  "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
+}}
 
-        summary_raw = data.get("summary", "")
-        if not summary_raw or len(summary_raw.strip()) < 10:
-            summary_raw = f"Email from {from_name} about: {subject}. {body_preview[:150]}"
+From: {from_name}
+Subject: {subject}
+Preview: {body_preview[:400]}"""
+
+        loop = asyncio.get_event_loop()
+        raw = await loop.run_in_executor(
+            None,
+            partial(call_groq, combined_prompt,
+            "You are an email assistant. Reply ONLY with valid JSON. No markdown. No explanation. No text outside the JSON object.",
+            500)
+        )
+        parsed = parse_priority_json(raw)
+
+        summary_raw = parsed.get("summary")
+        if not summary_raw or not isinstance(summary_raw, str) or len(summary_raw.strip()) < 10:
+            summary_raw = f"Email from {from_name} about {subject}."
             
-        draft_raw = data.get("draft_reply", "")
-        if not draft_raw or len(draft_raw.strip()) < 10:
+        draft_raw = parsed.get("draft_reply")
+        if not draft_raw or not isinstance(draft_raw, str) or len(draft_raw.strip()) < 10:
             draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
 
-        is_urgent       = data.get("priority") == "urgent"
+        is_urgent       = parsed.get("priority") == "urgent"
         has_valid_draft = False
 
         result = {
             "email_id":      email_id,
-            "priority":      data.get("priority", "normal"),
-            "reason":        data.get("reason", ""),
-            "deadline":      data.get("deadline"),
-            "requires_reply":data.get("requires_reply", False),
+            "priority":      parsed.get("priority", "normal"),
+            "reason":        parsed.get("reason", ""),
+            "deadline":      parsed.get("deadline", None),
+            "requires_reply":parsed.get("requires_reply", False),
             "summary":       summary_raw,
             "draft_reply":   draft_raw,
             "analyzed_at":   datetime.now(timezone.utc).isoformat()   # for live deadline countdown
         }
 
         # Build activity item for the feed
-        icon = "🚨" if is_urgent else ("✅" if data.get("priority") == "low" else "✉️")
+        icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
         activity_item = {
             "icon":     icon,
             "text":     f"{from_name} — {subject[:40]}",
             "time":     datetime.now(timezone.utc).strftime("%H:%M"),
-            "priority": data.get("priority", "normal")
+            "priority": parsed.get("priority", "normal")
         }
 
         # Persist to Firestore (non-blocking)
@@ -1132,7 +1161,8 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 @app.post("/ai/analyze-batch")
 async def analyze_batch(request: Request, user=Depends(get_current_user)):
     body       = await request.json()
-    emails     = body.get("emails", [])[:20]
+    emails     = body.get("emails", [])[:10]
+    print(f"Analyzing batch of {len(emails)} emails")
     user_email = user.get("email", "")
     results    = {}
 
@@ -1146,28 +1176,46 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             subject      = email.get("subject", "")
             body_preview = email.get("body_preview", "")
 
-            loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(
-                None,
-                partial(analyze_email_hf, from_name, subject, body_preview)
-            )
+            combined_prompt = f"""Analyze this email. Reply with ONLY a valid 
+JSON object, no markdown, no explanation, no extra text:
+{{
+  "priority": "urgent" or "normal" or "low",
+  "reason": "one sentence why",
+  "deadline": "deadline phrase or null",
+  "requires_reply": true or false,
+  "summary": "exactly 2 sentences about what this email is about and what action is needed",
+  "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
+}}
 
-            summary_raw = data.get("summary", "")
-            if not summary_raw or len(summary_raw.strip()) < 10:
-                summary_raw = f"Email from {from_name} about: {subject}. {body_preview[:150]}"
+From: {from_name}
+Subject: {subject}
+Preview: {body_preview[:400]}"""
+
+            loop = asyncio.get_event_loop()
+            raw = await loop.run_in_executor(
+                None,
+                partial(call_groq, combined_prompt,
+                "You are an email assistant. Reply ONLY with valid JSON. No markdown. No explanation. No text outside the JSON object.",
+                500)
+            )
+            parsed = parse_priority_json(raw)
+
+            summary_raw = parsed.get("summary")
+            if not summary_raw or not isinstance(summary_raw, str) or len(summary_raw.strip()) < 10:
+                summary_raw = f"Email from {from_name} about {subject}."
                 
-            draft_raw = data.get("draft_reply", "")
-            if not draft_raw or len(draft_raw.strip()) < 10:
+            draft_raw = parsed.get("draft_reply")
+            if not draft_raw or not isinstance(draft_raw, str) or len(draft_raw.strip()) < 10:
                 draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
 
-            is_urgent       = data.get("priority") == "urgent"
+            is_urgent       = parsed.get("priority") == "urgent"
             has_valid_draft = False
 
             result = {
-                "priority":      data.get("priority", "normal"),
-                "reason":        data.get("reason", ""),
-                "deadline":      data.get("deadline"),
-                "requires_reply":data.get("requires_reply", False),
+                "priority":      parsed.get("priority", "normal"),
+                "reason":        parsed.get("reason", ""),
+                "deadline":      parsed.get("deadline", None),
+                "requires_reply":parsed.get("requires_reply", False),
                 "summary":       summary_raw,
                 "draft_reply":   draft_raw
             }
@@ -1178,12 +1226,12 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             if is_urgent:    total_urgent  += 1
             if has_valid_draft: total_replies += 1
 
-            icon = "🚨" if is_urgent else ("✅" if data.get("priority") == "low" else "✉️")
+            icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
             activity_items.append({
                 "icon":     icon,
                 "text":     f"{from_name} — {subject[:40]}",
                 "time":     datetime.now(timezone.utc).strftime("%H:%M"),
-                "priority": data.get("priority", "normal")
+                "priority": parsed.get("priority", "normal")
             })
 
             # Save individual AI result to Firestore (non-blocking)
@@ -1191,7 +1239,7 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
                 save_email_ai_result, user_email, email_id, result
             ))
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
 
         except Exception as e:
             print(f"Batch error for {email.get('id')}: {traceback.format_exc()}")

@@ -317,6 +317,80 @@ const App = () => {
   const [whatsappNumber, setWhatsappNumber] = useState(() => localStorage.getItem('mp_wa') || '');
   const [whatsappSaved, setWhatsappSaved] = useState(false);
 
+  const [senders, setSenders] = useState([]);
+  const [selectedSender, setSelectedSender] = useState(null);
+  const [senderEmails, setSenderEmails] = useState([]);
+  const [senderSearch, setSenderSearch] = useState('');
+
+  const computeSenders = (emailsList) => {
+    const sendersMap = {}
+    
+    emailsList.forEach(email => {
+      const key = (email.from_email || '').toLowerCase().trim()
+      
+      if (!sendersMap[key]) {
+        sendersMap[key] = {
+          email: email.from_email,
+          name: email.from_name || email.from_email,
+          emails: [],
+          latestDate: email.date,
+          unreadCount: 0,
+          urgentCount: 0,
+          avatar: (email.from_name || email.from_email || '?').charAt(0).toUpperCase()
+        }
+      }
+      
+      sendersMap[key].emails.push(email)
+      
+      if (!email.is_read) {
+        sendersMap[key].unreadCount += 1
+      }
+    })
+    
+    const sendersArray = Object.values(sendersMap)
+    
+    sendersArray.sort((a, b) => {
+      const dateA = new Date(a.emails[0].date)
+      const dateB = new Date(b.emails[0].date)
+      return dateB - dateA
+    })
+    
+    sendersArray.forEach(sender => {
+      sender.emails.sort((a, b) => 
+        new Date(b.date) - new Date(a.date)
+      )
+      sender.latestDate = sender.emails[0].date
+      sender.latestSubject = sender.emails[0].subject
+      sender.latestSnippet = sender.emails[0].snippet
+    })
+    
+    return sendersArray
+  }
+
+  useEffect(() => {
+    if (mails && Array.isArray(mails) && mails.length > 0) {
+      const computed = computeSenders(mails)
+      setSenders(computed)
+    }
+  }, [mails])
+
+  useEffect(() => {
+    if (senders.length > 0 && Object.keys(aiResults).length > 0) {
+      const updated = senders.map(sender => ({
+        ...sender,
+        urgentCount: sender.emails.filter(e => 
+          aiResults[e.id]?.priority === 'urgent'
+        ).length
+      }))
+      setSenders(updated)
+    }
+  }, [aiResults])
+
+  const filteredSenders = senders.filter(s => 
+    (s.name || '').toLowerCase().includes(senderSearch.toLowerCase()) ||
+    (s.email || '').toLowerCase().includes(senderSearch.toLowerCase())
+  );
+
   const audioRef = useRef(null);
 
   const API_BASE = "http://localhost:8000";
@@ -406,7 +480,7 @@ const App = () => {
           if (!selectedMailId && combined.length > 0) {
             setSelectedMailId(combined[0].id);
           }
-          analyzeBatch(combined.slice(0, 20));
+          analyzeBatch(combined.slice(0, 10));
           return combined;        });
       }
 
@@ -594,20 +668,28 @@ const App = () => {
     if (toAnalyze.length === 0) return;
     setIsAnalyzing(true);
     try {
+      const emailsToAnalyze = toAnalyze.slice(0, 10);
       const batchResp = await fetch(`${API_BASE}/ai/analyze-batch`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ emails: toAnalyze })
+        body: JSON.stringify({ emails: emailsToAnalyze })
       });
       if (!batchResp.ok) throw new Error("Batch analysis failed");
-      const batchData = await batchResp.json();
-      // console.log("Batch response:", JSON.stringify(batchData))
-      if (batchData.results) {
-        setAiResults(prev => ({ ...prev, ...batchData.results }))
-        // console.log("AI results set:", Object.keys(batchData.results))
+      const batchData = await batchResp.json()
+      console.log("Batch response received:", batchData)
+      console.log("Results:", batchData.results)
+
+      if (batchData && batchData.results) {
+        setAiResults(prev => {
+          const newResults = { ...prev, ...batchData.results }
+          console.log("Total AI results stored:", Object.keys(newResults).length)
+          return newResults
+        })
+      } else {
+        console.error("Batch response missing results:", batchData)
       }
       // Refresh stats from Firestore via backend
       fetchDashboardStats();
@@ -760,45 +842,47 @@ const App = () => {
   };
 
   const handleEmailSelect = async (email) => {
-    setSelectedMailId(email.id);
-    markEmailAsRead(email.id);
+    setSelectedMailId(email.id)
+    markEmailAsRead(email.id)
     
-    if (!aiResults[email.id]) {
+    const existing = aiResults[email.id]
+    if (existing && !existing.loading && existing.summary) {
+      return
+    }
+    
+    setAiResults(prev => ({ ...prev, [email.id]: { loading: true } }))
+    
+    try {
       const token = localStorage.getItem('mp_token');
-      try {
-        setAiResults(prev => ({ 
-          ...prev, 
-          [email.id]: { loading: true } 
-        }))
-        
-        const resp = await fetch(`${API_BASE}/ai/analyze`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
-          },
-          body: JSON.stringify({
-            email_id: email.id,
-            subject: email.subject,
-            from_name: email.from_name,
-            body_preview: email.body_preview,
-            snippet: email.snippet
-          })
+      const resp = await fetch(`${API_BASE}/ai/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({
+          email_id: email.id,
+          subject: email.subject,
+          from_name: email.from_name,
+          body_preview: email.body_preview || email.snippet || '',
+          snippet: email.snippet || ''
         })
-        const result = await resp.json()
-        setAiResults(prev => ({ ...prev, [email.id]: result }))
-      } catch(e) {
-        console.error('Auto analyze error:', e)
-        setAiResults(prev => ({ 
-          ...prev, 
-          [email.id]: { 
-            loading: false,
-            summary: null,
-            draft_reply: null,
-            priority: 'normal'
-          } 
-        }))
-      }
+      })
+      const result = await resp.json()
+      console.log("Single analyze result:", result)
+      setAiResults(prev => ({ ...prev, [email.id]: result }))
+    } catch(e) {
+      console.error('Auto analyze failed:', e)
+      setAiResults(prev => ({ 
+        ...prev, 
+        [email.id]: { 
+          loading: false,
+          summary: null,
+          draft_reply: null,
+          priority: 'normal',
+          requires_reply: false
+        }
+      }))
     }
   };
 
@@ -1918,6 +2002,7 @@ const App = () => {
             <div className="profile-meta">
               <div className="meta-item"><span>Member since</span><span className="meta-val">May 2026</span></div>
               <div className="meta-item"><span>Last sync</span><span className="meta-val">Just now</span></div>
+              <div className="meta-item"><span>SENDERS</span><span className="meta-val">{senders.length}</span></div>
             </div>
           </div>
 
@@ -1947,9 +2032,10 @@ const App = () => {
             <span className="nav-icon">📰</span>
             <span>Daily Digest</span>
           </div>
-          <div className={`nav-item ${activeTab === 'All Mail' ? 'active' : ''}`} onClick={() => { setActiveTab('All Mail'); setMobileSidebarOpen(false); }}>
-            <span className="nav-icon">📥</span>
-            <span>All Mail</span>
+          <div className={`nav-item ${activeTab === 'senders' ? 'active' : ''}`} onClick={() => { setActiveTab('senders'); setMobileSidebarOpen(false); }}>
+            <span className="nav-icon"><i className="ti ti-users"></i></span>
+            <span>Senders</span>
+            <span style={{ marginLeft: 'auto', fontSize: '11px', opacity: 0.7 }}>{senders.length} unique senders</span>
           </div>
           <div className={`nav-item ${activeTab === 'Awaiting Reply' ? 'active' : ''}`} onClick={() => { setActiveTab('Awaiting Reply'); setMobileSidebarOpen(false); }}>
             <span className="nav-icon">💬</span>
@@ -2198,7 +2284,7 @@ const App = () => {
 
 
         {/* ── Mail List + Detail ── */}
-        {(activeTab !== 'Dashboard' && activeTab !== 'Daily Digest') && (
+        {(activeTab !== 'Dashboard' && activeTab !== 'Daily Digest' && activeTab !== 'senders') && (
           <>
             {/* Mail List */}
             <main className="mail-list">
@@ -2298,63 +2384,43 @@ const App = () => {
                       </div>
                       {(() => {
                         const emailId = selectedMail?.id
-                        const aiData = aiResults[emailId]
-                        const isLoading = aiData?.loading === true
-                        const hasSummary = aiData && aiData.summary && 
-                          aiData.summary !== 'null' && 
-                          aiData.summary !== 'None' &&
-                          aiData.summary.length > 10
+                        const aiData = aiResults?.[emailId]
+                        const isAnalyzing = aiData?.loading === true
+                        const summary = aiData?.summary
+                        const hasSummary = summary && 
+                            typeof summary === 'string' && 
+                            summary.length > 10 &&
+                            summary !== 'null' &&
+                            summary !== 'None' &&
+                            !summary.includes('Could not')
 
-                        if (isLoading) {
-                          return (
-                            <div style={{ padding: '4px 0' }}>
-                              <div className="ai-skel" style={{ width: '100%' }}></div>
-                              <div className="ai-skel" style={{ width: '80%' }}></div>
-                              <div className="ai-skel" style={{ width: '60%' }}></div>
-                            </div>
-                          )
-                        }
-
-                        if (hasSummary) {
-                          // Detect if the summary text mentions a time window (stale) while a live countdown is also shown
-                          const summaryHasTimeRef = aiData.deadline &&
-                            /\d+\s*(hour|day|minute|week|hr)/i.test(aiData.summary);
-
-                          return (
-                            <>
-                              <p className="summary-text">{aiData.summary}</p>
-                              {summaryHasTimeRef && (
-                                <p style={{
-                                  fontSize: '11px',
-                                  color: 'var(--text-secondary)',
-                                  opacity: 0.6,
-                                  margin: '4px 0 8px',
-                                  fontStyle: 'italic',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px'
-                                }}>
-                                  ↑ Time in summary is from the original email — live countdown below
-                                </p>
-                              )}
-                              {aiData.deadline && (
-                                <DeadlineCountdown
-                                  deadline={aiData.deadline}
-                                  analyzedAt={aiData.analyzed_at}
-                                  emailDate={selectedMail?.internal_date}
-                                />
-                              )}
-                            </>
-                          )
-                        }
+                        console.log("Selected:", emailId, "aiData:", aiData, "summary:", summary)
 
                         return (
-                          <div style={{ textAlign: 'center', padding: '12px' }}>
-                            <p className="history-item" style={{ marginBottom: '12px' }}>No AI summary available yet.</p>
-                            <button className="btn-sec" style={{ fontSize: '12px' }} onClick={() => analyzeEmail(selectedMail)}>
-                              ✨ Analyze this email
-                            </button>
-                          </div>
+                          <>
+                            {isAnalyzing && (
+                              <div style={{ padding: '4px 0' }}>
+                                <div className="ai-skel" style={{ width: '100%' }}></div>
+                                <div className="ai-skel" style={{ width: '80%' }}></div>
+                                <div className="ai-skel" style={{ width: '60%' }}></div>
+                              </div>
+                            )}
+                            {!isAnalyzing && hasSummary && (
+                              <p style={{fontSize:14, lineHeight:1.7, color:'#C9D1D9'}}>
+                                {summary}
+                              </p>
+                            )}
+                            {!isAnalyzing && !hasSummary && !aiData && (
+                              <div style={{ textAlign: 'center', padding: '12px' }}>
+                                <p style={{color:'#8B949E', fontSize:13, marginBottom: '12px'}}>
+                                  No AI summary yet.
+                                </p>
+                                <button className="btn-sec" onClick={() => handleEmailSelect(selectedMail)}>
+                                  ✨ Analyze this email
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )
                       })()}
                     </div>
@@ -2432,43 +2498,49 @@ const App = () => {
                       <span>✍️</span> AI Draft Reply
                     </div>
                     {(() => {
-                      const aiData = aiResults[selectedMail.id]
-                      const isLoading = aiData?.loading === true
-
-                      if (isLoading) {
-                        return (
-                          <div style={{ padding: '4px 0' }}>
-                            <div className="ai-skel" style={{ width: '100%' }}></div>
-                            <div className="ai-skel" style={{ width: '80%' }}></div>
-                            <div className="ai-skel" style={{ width: '60%' }}></div>
-                          </div>
-                        )
-                      }
-
-                      if (aiData?.draft_reply) {
-                        return (
-                          <>
-                            <div className="draft-text">{renderFormattedDraft(aiData.draft_reply)}</div>
-                            <div className="btn-row">
-                              <button
-                                className="btn-send"
-                                onClick={() => sendDraftReply(selectedMail)}
-                                disabled={sendingReplyIds.has(selectedMail.id)}
-                              >
-                                {sendingReplyIds.has(selectedMail.id) ? "Sending..." : "Send reply"}
-                              </button>
-                              <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
-                              <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiData.draft_reply)}>Copy</button>
-                            </div>
-                          </>
-                        )
-                      }
+                      const emailId = selectedMail?.id;
+                      const aiData = aiResults?.[emailId];
+                      const isAnalyzing = aiData?.loading === true;
+                      const draft = aiData?.draft_reply;
+                      const hasDraft = draft && 
+                          typeof draft === 'string' && 
+                          draft.length > 10 &&
+                          draft !== 'null';
 
                       return (
-                        <div className="draft-text draft-placeholder">
-                          {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
-                        </div>
-                      )
+                        <>
+                          {isAnalyzing && (
+                            <div style={{ padding: '4px 0' }}>
+                              <div className="ai-skel" style={{ width: '100%' }}></div>
+                              <div className="ai-skel" style={{ width: '80%' }}></div>
+                              <div className="ai-skel" style={{ width: '60%' }}></div>
+                            </div>
+                          )}
+                          {!isAnalyzing && hasDraft && (
+                            <>
+                              <p style={{fontSize:14, lineHeight:1.7, color:'#C9D1D9', marginBottom: '16px'}}>
+                                {draft}
+                              </p>
+                              <div className="btn-row">
+                                <button
+                                  className="btn-send"
+                                  onClick={() => sendDraftReply(selectedMail)}
+                                  disabled={sendingReplyIds.has(selectedMail.id)}
+                                >
+                                  {sendingReplyIds.has(selectedMail.id) ? "Sending..." : "Send reply"}
+                                </button>
+                                <button className="btn-sec" onClick={() => handleEmailSelect(selectedMail)}>Regenerate</button>
+                                <button className="btn-sec" onClick={() => navigator.clipboard.writeText(draft)}>Copy</button>
+                              </div>
+                            </>
+                          )}
+                          {!isAnalyzing && !hasDraft && (
+                            <p style={{fontSize:13, color:'#8B949E', fontStyle:'italic'}}>
+                              {aiData ? 'Could not generate draft.' : 'AI drafting coming soon...'}
+                            </p>
+                          )}
+                        </>
+                      );
                     })()}
                   </div>
                 </div>
@@ -2530,6 +2602,177 @@ const App = () => {
             )}
           </section>
         </>
+        )}
+
+        {/* ── Senders View ── */}
+        {activeTab === 'senders' && (
+          <div style={{ display: 'flex', width: '100%', height: 'calc(100vh - 66px)', overflow: 'hidden' }}>
+            {/* LEFT PANEL */}
+            <div style={{ width: '380px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+              <div style={{ padding: '16px 16px 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>Senders</h1>
+                  <span style={{ background: 'var(--border)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>{senders.length}</span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search senders..."
+                  value={senderSearch}
+                  onChange={e => setSenderSearch(e.target.value)}
+                  style={{
+                    background: '#161B22', border: '1px solid #30363D', borderRadius: '8px',
+                    padding: '8px 12px', width: '100%', color: '#E6EDF3', fontSize: '13px',
+                    outline: 'none', marginBottom: '12px'
+                  }}
+                />
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {filteredSenders.map(sender => {
+                  const avatarColors = ['#F0A500','#1AAB8A','#7B7BF5','#E05C5C','#3B8BD4','#E8A87C'];
+                  const colorIndex = (sender.name || 'A').charCodeAt(0) % avatarColors.length;
+                  const isSelected = selectedSender?.email === sender.email;
+                  return (
+                    <div
+                      key={sender.email}
+                      onClick={() => { setSelectedSender(sender); setSenderEmails(sender.emails); setSelectedMailId(null); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', padding: '12px 16px', cursor: 'pointer',
+                        borderBottom: '1px solid #21262D', background: isSelected ? '#161B22' : 'transparent',
+                        borderLeft: isSelected ? '3px solid #F0A500' : '3px solid transparent',
+                        transition: 'background 0.1s'
+                      }}
+                      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#161B22'; }}
+                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <div style={{
+                        width: '40px', height: '40px', borderRadius: '50%', background: avatarColors[colorIndex],
+                        color: '#0D1117', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: '600', fontSize: '16px', flexShrink: 0, marginRight: '12px'
+                      }}>{sender.avatar}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sender.name}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                            {new Date(sender.latestDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#C9D1D9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '2px' }}>{decodeHtmlEntities(sender.latestSubject)}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{decodeHtmlEntities(sender.latestSnippet)}</div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', marginLeft: '8px' }}>
+                        {sender.unreadCount > 0 && (
+                          <div style={{
+                            background: '#F0A500', color: '#0D1117', borderRadius: '50%', minWidth: '20px', height: '20px',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '600'
+                          }}>{sender.unreadCount}</div>
+                        )}
+                        {sender.urgentCount > 0 && <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#FF2A55' }}></div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT PANEL */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--surface)', position: 'relative' }}>
+              {selectedSender ? (
+                <>
+                  <div style={{ padding: '20px 24px', borderBottom: '1px solid #21262D', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{
+                      width: '48px', height: '48px', borderRadius: '50%', flexShrink: 0,
+                      background: ['#F0A500','#1AAB8A','#7B7BF5','#E05C5C','#3B8BD4','#E8A87C'][(selectedSender.name || 'A').charCodeAt(0) % 6],
+                      color: '#0D1117', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', fontSize: '20px'
+                    }}>{selectedSender.avatar}</div>
+                    <div>
+                      <div style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)' }}>{selectedSender.name}</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{selectedSender.email}</div>
+                      <div style={{ fontSize: '13px', color: '#8B949E', marginTop: '4px' }}>{selectedSender.emails.length} emails · {selectedSender.unreadCount} unread</div>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+                    {senderEmails.map(email => {
+                      const ai = aiResults[email.id];
+                      const isExpanded = selectedMailId === email.id;
+                      return (
+                        <div key={email.id} style={{
+                          background: '#161B22', border: '1px solid #21262D', borderRadius: '10px',
+                          padding: '16px', margin: '0 16px 12px', cursor: 'pointer', transition: 'border-color 0.2s'
+                        }} onClick={() => handleEmailSelect(email)}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <div style={{ fontSize: '15px', fontWeight: '500', color: '#E6EDF3', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {!email.is_read && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#F0A500', flexShrink: 0 }}></span>}
+                              {decodeHtmlEntities(email.subject)}
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                              {new Date(email.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#8B949E', lineHeight: '1.5', marginTop: '6px' }}>
+                            {decodeHtmlEntities(email.snippet)}
+                          </div>
+                          {ai && (ai.priority === 'urgent' || ai.requires_reply || ai.priority === 'low') && (
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                              {ai.priority === 'urgent' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,42,85,0.15)', color: '#FF2A55', padding: '2px 8px', borderRadius: '12px' }}>URGENT</span>}
+                              {ai.priority === 'low' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(26,171,138,0.15)', color: '#1AAB8A', padding: '2px 8px', borderRadius: '12px' }}>LOW PRIORITY</span>}
+                              {ai.requires_reply && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(50,173,230,0.15)', color: '#32ADE6', padding: '2px 8px', borderRadius: '12px' }}>REPLY NEEDED</span>}
+                            </div>
+                          )}
+
+                          {isExpanded && (
+                            <div style={{ marginTop: '16px', borderTop: '1px solid #21262D', paddingTop: '16px' }} onClick={e => e.stopPropagation()}>
+                              <div style={{ marginBottom: '16px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8B949E', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>✨</span> AI Context Summary
+                                </div>
+                                {ai?.loading ? (
+                                  <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>Generating summary...</div>
+                                ) : ai?.summary && ai.summary.length > 10 && ai.summary !== 'null' && ai.summary !== 'None' && !ai.summary.includes('Could not') ? (
+                                  <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9' }}>{ai.summary}</div>
+                                ) : (
+                                  <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>No AI summary available.</div>
+                                )}
+                              </div>
+                              
+                              <div>
+                                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8B949E', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>✍️</span> AI Draft Reply
+                                </div>
+                                {ai?.loading ? (
+                                  <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>Generating draft...</div>
+                                ) : ai?.draft_reply && ai.draft_reply.length > 10 && ai.draft_reply !== 'null' ? (
+                                  <>
+                                    <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9', marginBottom: '12px', background: '#0D1117', padding: '12px', borderRadius: '8px', border: '1px solid #30363D' }}>{ai.draft_reply}</div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button className="btn-send" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => sendDraftReply(email)} disabled={sendingReplyIds.has(email.id)}>
+                                        {sendingReplyIds.has(email.id) ? "Sending..." : "Send Reply"}
+                                      </button>
+                                      <button className="btn-sec" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => handleEmailSelect(email)}>Regenerate</button>
+                                      <button className="btn-sec" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => navigator.clipboard.writeText(ai.draft_reply)}>Copy</button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>No draft reply generated.</div>
+                                )}
+                              </div>
+                              <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                                <button className="btn-sec" style={{ fontSize: '12px', padding: '6px 12px', minHeight: '30px' }} onClick={(e) => { e.stopPropagation(); setSelectedMailId(null); }}>Close</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8B949E' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.5 }}>📨</div>
+                  <div style={{ fontSize: '14px' }}>Select a sender to see all their emails</div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
       </div>
