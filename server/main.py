@@ -13,10 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.staticfiles import StaticFiles
-import numpy as np
-import soundfile as sf
 import io
-from kokoro import KPipeline
 import uuid
 import aiofiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,17 +26,6 @@ import firebase_admin
 from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
 
 load_dotenv()
-
-kokoro_pipeline = None
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-def get_kokoro_pipeline():
-    global kokoro_pipeline
-    if kokoro_pipeline is None:
-        print("Loading Kokoro TTS pipeline...")
-        kokoro_pipeline = KPipeline(lang_code='a')
-        print("Kokoro TTS ready!")
-    return kokoro_pipeline
 
 
 # ── Firebase / Firestore ────────────────────────────────────────────────────
@@ -55,13 +41,14 @@ import os
 os.makedirs("audio", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="audio"), name="audio")
 
-GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI         = os.getenv("REDIRECT_URI")
-FRONTEND_URL         = os.getenv("FRONTEND_URL", "http://localhost:5173")
-SECRET_KEY           = os.getenv("SECRET_KEY", "fallback-secret-key")
-GROQ_API_KEY         = os.getenv("GROQ_API_KEY")
-HF_TOKEN             = os.getenv("HF_TOKEN")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+REDIRECT_URI = os.getenv("REDIRECT_URI", "http://localhost:8000/auth/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ALGORITHM            = "HS256"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -73,7 +60,11 @@ SCOPES = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://your-vercel-app.vercel.app",
+        "*"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -332,29 +323,20 @@ def analyze_email_hf(from_name, subject, body_preview):
         "draft_reply": data.get("draft_reply", "Draft generation failed.")
     }
 
+from elevenlabs.client import ElevenLabs
+
 def generate_voice_briefing(script: str) -> bytes:
     try:
-        pipeline = get_kokoro_pipeline()
-        generator = pipeline(
-            script,
-            voice='af_bella',
-            speed=1.1
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        audio = client.text_to_speech.convert(
+            voice_id="21m00Tcm4TlvDq8ikWAM",
+            text=script,
+            model_id="eleven_multilingual_v2"
         )
-        audio_chunks = []
-        print(f"Starting Kokoro TTS generation for {len(script.split())} words... (This may take a minute or two on CPU)")
-        for i, (gs, ps, audio) in enumerate(generator):
-            print(f"Generated audio chunk {i+1}...")
-            audio_chunks.append(audio)
-        if not audio_chunks:
-            return None
-        full_audio = np.concatenate(audio_chunks)
-        buffer = io.BytesIO()
-        sf.write(buffer, full_audio, 24000, format='WAV')
-        buffer.seek(0)
-        print("Kokoro TTS generation complete!")
-        return buffer.read()
+        audio_bytes = b"".join(audio)
+        return audio_bytes
     except Exception as e:
-        print(f"Kokoro TTS error: {traceback.format_exc()}")
+        print(f"ElevenLabs error: {e}")
         return None
 
 
