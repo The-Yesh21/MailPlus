@@ -122,11 +122,21 @@ def append_activity_feed(user_email: str, new_items: list):
 def save_email_ai_result(user_email: str, email_id: str, result: dict):
     """Persist AI analysis result for a single email."""
     try:
+        safe_data = {
+            "priority": result.get("priority", "normal"),
+            "reason": result.get("reason", ""),
+            "deadline": result.get("deadline", None),
+            "requires_reply": result.get("requires_reply", False),
+            "summary": result.get("summary", None),
+            "draft_reply": result.get("draft_reply", None),
+            "messageId": email_id,
+            "cachedAt": datetime.now(timezone.utc).isoformat()
+        }
         fs.collection("email_ai")\
           .document(user_email)\
           .collection("results")\
           .document(email_id)\
-          .set(result, merge=True)
+          .set(safe_data, merge=True)
     except Exception as e:
         print(f"Firestore AI result write error: {e}")
 
@@ -331,7 +341,9 @@ def generate_voice_briefing(script: str) -> bytes:
             speed=1.1
         )
         audio_chunks = []
+        print(f"Starting Kokoro TTS generation for {len(script.split())} words... (This may take a minute or two on CPU)")
         for i, (gs, ps, audio) in enumerate(generator):
+            print(f"Generated audio chunk {i+1}...")
             audio_chunks.append(audio)
         if not audio_chunks:
             return None
@@ -339,6 +351,7 @@ def generate_voice_briefing(script: str) -> bytes:
         buffer = io.BytesIO()
         sf.write(buffer, full_audio, 24000, format='WAV')
         buffer.seek(0)
+        print("Kokoro TTS generation complete!")
         return buffer.read()
     except Exception as e:
         print(f"Kokoro TTS error: {traceback.format_exc()}")
@@ -1143,9 +1156,10 @@ Preview: {body_preview[:400]}"""
 
         # Build activity item for the feed
         icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
+        text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if parsed.get("priority") == "low" else "Analyzed email")
         activity_item = {
             "icon":     icon,
-            "text":     f"{from_name} — {subject[:40]}",
+            "text":     text_desc,
             "time":     datetime.now(timezone.utc).strftime("%H:%M"),
             "priority": parsed.get("priority", "normal")
         }
@@ -1239,9 +1253,10 @@ Preview: {body_preview[:400]}"""
             if has_valid_draft: total_replies += 1
 
             icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
+            text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if parsed.get("priority") == "low" else "Analyzed email")
             activity_items.append({
                 "icon":     icon,
-                "text":     f"{from_name} — {subject[:40]}",
+                "text":     text_desc,
                 "time":     datetime.now(timezone.utc).strftime("%H:%M"),
                 "priority": parsed.get("priority", "normal")
             })
