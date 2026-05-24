@@ -406,9 +406,8 @@ const App = () => {
           if (!selectedMailId && combined.length > 0) {
             setSelectedMailId(combined[0].id);
           }
-          analyzeBatch(combined.slice(0, 10));
-          return combined;
-        });
+          analyzeBatch(combined.slice(0, 20));
+          return combined;        });
       }
 
       const elapsed = Date.now() - startTime;
@@ -757,6 +756,49 @@ const App = () => {
       // Keep existing or default stats on failure
     } finally {
       setIsFetchingStats(false);
+    }
+  };
+
+  const handleEmailSelect = async (email) => {
+    setSelectedMailId(email.id);
+    markEmailAsRead(email.id);
+    
+    if (!aiResults[email.id]) {
+      const token = localStorage.getItem('mp_token');
+      try {
+        setAiResults(prev => ({ 
+          ...prev, 
+          [email.id]: { loading: true } 
+        }))
+        
+        const resp = await fetch(`${API_BASE}/ai/analyze`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            email_id: email.id,
+            subject: email.subject,
+            from_name: email.from_name,
+            body_preview: email.body_preview,
+            snippet: email.snippet
+          })
+        })
+        const result = await resp.json()
+        setAiResults(prev => ({ ...prev, [email.id]: result }))
+      } catch(e) {
+        console.error('Auto analyze error:', e)
+        setAiResults(prev => ({ 
+          ...prev, 
+          [email.id]: { 
+            loading: false,
+            summary: null,
+            draft_reply: null,
+            priority: 'normal'
+          } 
+        }))
+      }
     }
   };
 
@@ -1443,6 +1485,18 @@ const App = () => {
           .skeleton-row { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
           .skel-line { height: 10px; background: var(--border-muted); border-radius: 4px; animation: pulse-skel 1.5s infinite; }
           @keyframes pulse-skel { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.8; } }
+
+          .ai-skel {
+            background: #21262D;
+            border-radius: 4px;
+            height: 16px;
+            margin-bottom: 8px;
+            animation: pulse-ai 1.2s infinite;
+          }
+          @keyframes pulse-ai {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 0.8; }
+          }
 
           .global-error-panel {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -2183,10 +2237,7 @@ const App = () => {
                     <div 
                       key={mail.id} 
                       className={`mail-row ${selectedMailId === mail.id ? 'selected' : ''}`}
-                      onClick={() => {
-                        setSelectedMailId(mail.id);
-                        markEmailAsRead(mail.id);
-                      }}
+                      onClick={() => handleEmailSelect(mail)}
                     >
                       <div 
                         className="priority-dot" 
@@ -2248,8 +2299,21 @@ const App = () => {
                       {(() => {
                         const emailId = selectedMail?.id
                         const aiData = aiResults[emailId]
+                        const isLoading = aiData?.loading === true
                         const hasSummary = aiData && aiData.summary && 
-                          aiData.summary !== 'null' && aiData.summary.length > 10
+                          aiData.summary !== 'null' && 
+                          aiData.summary !== 'None' &&
+                          aiData.summary.length > 10
+
+                        if (isLoading) {
+                          return (
+                            <div style={{ padding: '4px 0' }}>
+                              <div className="ai-skel" style={{ width: '100%' }}></div>
+                              <div className="ai-skel" style={{ width: '80%' }}></div>
+                              <div className="ai-skel" style={{ width: '60%' }}></div>
+                            </div>
+                          )
+                        }
 
                         if (hasSummary) {
                           // Detect if the summary text mentions a time window (stale) while a live countdown is also shown
@@ -2281,15 +2345,6 @@ const App = () => {
                                 />
                               )}
                             </>
-                          )
-                        }
-
-                        if (emailId in aiResults) {
-                          return (
-                            <div className="empty-state" style={{ height: '100px' }}>
-                              <div className="spinner" style={{ width: '20px', height: '20px', marginBottom: '8px' }}></div>
-                              <div className="empty-subtitle">Analyzing...</div>
-                            </div>
                           )
                         }
 
@@ -2376,26 +2431,45 @@ const App = () => {
                     <div className="card-label">
                       <span>✍️</span> AI Draft Reply
                     </div>
-                    {aiResults[selectedMail.id]?.draft_reply ? (
-                      <>
-                        <div className="draft-text">{renderFormattedDraft(aiResults[selectedMail.id].draft_reply)}</div>
-                        <div className="btn-row">
-                          <button
-                            className="btn-send"
-                            onClick={() => sendDraftReply(selectedMail)}
-                            disabled={sendingReplyIds.has(selectedMail.id)}
-                          >
-                            {sendingReplyIds.has(selectedMail.id) ? "Sending..." : "Send reply"}
-                          </button>
-                          <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
-                          <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiResults[selectedMail.id].draft_reply)}>Copy</button>
+                    {(() => {
+                      const aiData = aiResults[selectedMail.id]
+                      const isLoading = aiData?.loading === true
+
+                      if (isLoading) {
+                        return (
+                          <div style={{ padding: '4px 0' }}>
+                            <div className="ai-skel" style={{ width: '100%' }}></div>
+                            <div className="ai-skel" style={{ width: '80%' }}></div>
+                            <div className="ai-skel" style={{ width: '60%' }}></div>
+                          </div>
+                        )
+                      }
+
+                      if (aiData?.draft_reply) {
+                        return (
+                          <>
+                            <div className="draft-text">{renderFormattedDraft(aiData.draft_reply)}</div>
+                            <div className="btn-row">
+                              <button
+                                className="btn-send"
+                                onClick={() => sendDraftReply(selectedMail)}
+                                disabled={sendingReplyIds.has(selectedMail.id)}
+                              >
+                                {sendingReplyIds.has(selectedMail.id) ? "Sending..." : "Send reply"}
+                              </button>
+                              <button className="btn-sec" onClick={() => analyzeEmail(selectedMail)}>Regenerate</button>
+                              <button className="btn-sec" onClick={() => navigator.clipboard.writeText(aiData.draft_reply)}>Copy</button>
+                            </div>
+                          </>
+                        )
+                      }
+
+                      return (
+                        <div className="draft-text draft-placeholder">
+                          {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
                         </div>
-                      </>
-                    ) : (
-                      <div className="draft-text draft-placeholder">
-                        {analyzingIds.has(selectedMail.id) ? "Generating draft..." : "Select 'Analyze' to generate a smart reply draft."}
-                      </div>
-                    )}
+                      )
+                    })()}
                   </div>
                 </div>
 

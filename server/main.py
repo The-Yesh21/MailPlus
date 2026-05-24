@@ -1078,6 +1078,14 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
             partial(analyze_email_hf, from_name, subject, body_preview)
         )
 
+        summary_raw = data.get("summary", "")
+        if not summary_raw or len(summary_raw.strip()) < 10:
+            summary_raw = f"Email from {from_name} about: {subject}. {body_preview[:150]}"
+            
+        draft_raw = data.get("draft_reply", "")
+        if not draft_raw or len(draft_raw.strip()) < 10:
+            draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
+
         is_urgent       = data.get("priority") == "urgent"
         has_valid_draft = False
 
@@ -1087,8 +1095,8 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
             "reason":        data.get("reason", ""),
             "deadline":      data.get("deadline"),
             "requires_reply":data.get("requires_reply", False),
-            "summary":       data.get("summary", body_preview[:200]),
-            "draft_reply":   data.get("draft_reply", "Could not generate draft."),
+            "summary":       summary_raw,
+            "draft_reply":   draft_raw,
             "analyzed_at":   datetime.now(timezone.utc).isoformat()   # for live deadline countdown
         }
 
@@ -1116,15 +1124,15 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
         return {
             "email_id": email_id, "priority": "normal",
             "reason": "Analysis failed", "deadline": None,
-            "requires_reply": False, "summary": body_preview[:200],
-            "draft_reply": "AI unavailable — please try again."
+            "requires_reply": False, "summary": f"Email from {from_name} about {subject}.",
+            "draft_reply": f"Hi {from_name},\n\nThank you for your email. I'll get back to you soon.\n\nBest, Yeshwanth"
         }
 
 
 @app.post("/ai/analyze-batch")
 async def analyze_batch(request: Request, user=Depends(get_current_user)):
     body       = await request.json()
-    emails     = body.get("emails", [])[:5]
+    emails     = body.get("emails", [])[:20]
     user_email = user.get("email", "")
     results    = {}
 
@@ -1144,6 +1152,14 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
                 partial(analyze_email_hf, from_name, subject, body_preview)
             )
 
+            summary_raw = data.get("summary", "")
+            if not summary_raw or len(summary_raw.strip()) < 10:
+                summary_raw = f"Email from {from_name} about: {subject}. {body_preview[:150]}"
+                
+            draft_raw = data.get("draft_reply", "")
+            if not draft_raw or len(draft_raw.strip()) < 10:
+                draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
+
             is_urgent       = data.get("priority") == "urgent"
             has_valid_draft = False
 
@@ -1152,8 +1168,8 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
                 "reason":        data.get("reason", ""),
                 "deadline":      data.get("deadline"),
                 "requires_reply":data.get("requires_reply", False),
-                "summary":       data.get("summary", body_preview[:200]),
-                "draft_reply":   data.get("draft_reply", "Could not generate draft.")
+                "summary":       summary_raw,
+                "draft_reply":   draft_raw
             }
             results[email_id] = result
 
@@ -1175,7 +1191,7 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
                 save_email_ai_result, user_email, email_id, result
             ))
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.5)
 
         except Exception as e:
             print(f"Batch error for {email.get('id')}: {traceback.format_exc()}")
