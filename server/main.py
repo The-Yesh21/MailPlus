@@ -695,7 +695,19 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     frontend_url = str(request.base_url)
     audio_url = f"{frontend_url}audio/{filename}"
 
-    return {"url": audio_url, "script": full_script}
+    import base64
+    audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+    
+    # Very rough estimate: 130 words per minute -> 2 words per second.
+    word_count = len(full_script.split())
+    duration_secs = max(1, word_count // 2)
+
+    return {
+        "url": audio_url, 
+        "script": full_script, 
+        "audio_base64": audio_base64,
+        "duration_estimate": f"~{duration_secs}s"
+    }
 
 
 @app.post("/ai/generate-morning-briefing")

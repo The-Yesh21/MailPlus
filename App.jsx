@@ -252,32 +252,36 @@ const renderFormattedDraft = (text) => {
   ));
 };
 
-const ErrorBoundary = ({ children }) => {
-  const [hasError, setHasError] = useState(false);
-  
-  useEffect(() => {
-    const handleError = (error) => {
-      console.error("Caught by ErrorBoundary:", error);
-      setHasError(true);
-    };
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
-
-  if (hasError) {
-    return (
-      <div className="fatal-error-container">
-        <div className="error-panel">
-          <div className="error-icon">⚠️</div>
-          <h2>Something went wrong</h2>
-          <p>The application encountered an unexpected error.</p>
-          <button className="btn-send" onClick={() => window.location.reload()}>Reload MailPulse</button>
-        </div>
-      </div>
-    );
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
   }
-  return children;
-};
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Caught by ErrorBoundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fatal-error-container">
+          <div className="error-panel">
+            <div className="error-icon">⚠️</div>
+            <h2>Something went wrong</h2>
+            <p>The application encountered an unexpected error.</p>
+            <button className="btn-send" onClick={() => window.location.reload()}>Reload MailPulse</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -321,6 +325,16 @@ const App = () => {
   const [selectedSender, setSelectedSender] = useState(null);
   const [senderEmails, setSenderEmails] = useState([]);
   const [senderSearch, setSenderSearch] = useState('');
+
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState('07:30');
+  const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
+  const [voiceGenerated, setVoiceGenerated] = useState(false);
+  const [audioElement, setAudioElement] = useState(null);
+  const [voiceScript, setVoiceScript] = useState('');
+  const [voiceDuration, setVoiceDuration] = useState('');
+  const [isPlayingVoice, setIsPlayingVoice] = useState(false);
+  const [toast, setToast] = useState(null);
 
   const computeSenders = (emailsList) => {
     const sendersMap = {}
@@ -839,6 +853,54 @@ const App = () => {
     } finally {
       setIsFetchingStats(false);
     }
+  };
+
+  const generateVoiceBriefing = async () => {
+    const token = localStorage.getItem('mp_token');
+    if (!token) return;
+    if (!mails || mails.length === 0) return;
+    
+    setIsGeneratingVoice(true);
+    try {
+      const resp = await fetch(`${API_BASE}/voice/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({
+          emails: mails.slice(0, 10),
+          ai_results: aiResults
+        })
+      });
+      if (!resp.ok) throw new Error("Voice generation failed");
+      const result = await resp.json();
+      
+      setVoiceScript(result.script);
+      setVoiceDuration(result.duration_estimate || "~2 mins");
+      
+      if (result.audio_base64) {
+        const audio = new Audio(`data:audio/wav;base64,${result.audio_base64}`);
+        audio.onended = () => setIsPlayingVoice(false);
+        setAudioElement(audio);
+        setVoiceGenerated(true);
+      }
+      
+    } catch (error) {
+      console.error("Failed to generate voice briefing:", error);
+    } finally {
+      setIsGeneratingVoice(false);
+    }
+  };
+
+  const sendToWhatsApp = () => {
+    const text = encodeURIComponent(`Here is your MailPulse morning briefing:\n\n${voiceScript || 'No script available.'}`);
+    window.open(`https://wa.me/${whatsappNumber || ''}?text=${text}`, '_blank');
+  };
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
   };
 
   const handleEmailSelect = async (email) => {
@@ -2546,51 +2608,15 @@ const App = () => {
                 </div>
 
                 {/* Voice Briefing Bar */}
-                <div className="voice-bar">
-                  <div className="play-circle" onClick={() => {
-                    if (!briefingAudioUrl) return;
-                    if (isPlayingBriefing) {
-                      // Stop playback
-                      if (audioRef.current) {
-                        audioRef.current.pause();
-                        audioRef.current.currentTime = 0;
-                        audioRef.current = null;
-                      }
-                      setIsPlayingBriefing(false);
-                    } else {
-                      // Start playback
-                      const audio = new Audio(briefingAudioUrl);
-                      audio.onended = () => {
-                        setIsPlayingBriefing(false);
-                        audioRef.current = null;
-                      };
-                      audioRef.current = audio;
-                      audio.play();
-                      setIsPlayingBriefing(true);
-                    }
-                  }}>
-                    {isPlayingBriefing ? <span>||</span> : <span>▶</span>}
-                  </div>
-                  <div className="briefing-meta">
-                    <span className="briefing-title">Morning briefing</span>
-                    <span className="briefing-sub">Tap Send to generate</span>
-                  </div>
-                  <div className="waveform">
-                    {[...Array(24)].map((_, i) => (
-                      <div 
-                        key={i} 
-                        className={`wave-bar ${isPlayingBriefing ? 'active' : ''}`} 
-                        style={{ 
-                          height: isPlayingBriefing ? '' : `${[8,14,10,18,12,20,10,16,8,22,12,18,8,20,14,24,10,18,8,12,6,16,10,14][i]}px`,
-                          animationDelay: `${i * 0.05}s` 
-                        }}
-                      ></div>
-                    ))}
-                  </div>
-                  <button className="whatsapp-btn" onClick={generateAndSendBriefing} disabled={isGeneratingBriefing} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-                    {isGeneratingBriefing ? <div className="spinner" style={{width:'14px',height:'14px',borderWidth:'2px'}}></div> : <span>✉</span>}
-                    {isGeneratingBriefing ? "Generating..." : "Send to WhatsApp"}
-                  </button>
+                <div 
+                  className="voice-bar" 
+                  onClick={() => setShowVoiceModal(true)} 
+                  style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>🎙️ Get voice briefing on WhatsApp</span>
+                  <span style={{ color: '#F0A500', fontSize: '12px', fontWeight: '600' }}>
+                    Tap to schedule →
+                  </span>
                 </div>
               </div>
             ) : (
@@ -2711,11 +2737,11 @@ const App = () => {
                           <div style={{ fontSize: '13px', color: '#8B949E', lineHeight: '1.5', marginTop: '6px' }}>
                             {decodeHtmlEntities(email.snippet)}
                           </div>
-                          {ai && (ai.priority === 'urgent' || ai.requires_reply || ai.priority === 'low') && (
+                          {ai && (ai?.priority === 'urgent' || ai?.requires_reply || ai?.priority === 'low') && (
                             <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                              {ai.priority === 'urgent' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,42,85,0.15)', color: '#FF2A55', padding: '2px 8px', borderRadius: '12px' }}>URGENT</span>}
-                              {ai.priority === 'low' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(26,171,138,0.15)', color: '#1AAB8A', padding: '2px 8px', borderRadius: '12px' }}>LOW PRIORITY</span>}
-                              {ai.requires_reply && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(50,173,230,0.15)', color: '#32ADE6', padding: '2px 8px', borderRadius: '12px' }}>REPLY NEEDED</span>}
+                              {ai?.priority === 'urgent' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,42,85,0.15)', color: '#FF2A55', padding: '2px 8px', borderRadius: '12px' }}>URGENT</span>}
+                              {ai?.priority === 'low' && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(26,171,138,0.15)', color: '#1AAB8A', padding: '2px 8px', borderRadius: '12px' }}>LOW PRIORITY</span>}
+                              {ai?.requires_reply && <span style={{ fontSize: '10px', fontWeight: 'bold', background: 'rgba(50,173,230,0.15)', color: '#32ADE6', padding: '2px 8px', borderRadius: '12px' }}>REPLY NEEDED</span>}
                             </div>
                           )}
 
@@ -2727,8 +2753,8 @@ const App = () => {
                                 </div>
                                 {ai?.loading ? (
                                   <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>Generating summary...</div>
-                                ) : ai?.summary && ai.summary.length > 10 && ai.summary !== 'null' && ai.summary !== 'None' && !ai.summary.includes('Could not') ? (
-                                  <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9' }}>{ai.summary}</div>
+                                ) : ai?.summary && ai?.summary.length > 10 && ai?.summary !== 'null' && ai?.summary !== 'None' && !ai?.summary.includes('Could not') ? (
+                                  <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9' }}>{ai?.summary}</div>
                                 ) : (
                                   <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>No AI summary available.</div>
                                 )}
@@ -2740,15 +2766,15 @@ const App = () => {
                                 </div>
                                 {ai?.loading ? (
                                   <div style={{ color: '#8B949E', fontSize: '13px', fontStyle: 'italic' }}>Generating draft...</div>
-                                ) : ai?.draft_reply && ai.draft_reply.length > 10 && ai.draft_reply !== 'null' ? (
+                                ) : ai?.draft_reply && ai?.draft_reply.length > 10 && ai?.draft_reply !== 'null' ? (
                                   <>
-                                    <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9', marginBottom: '12px', background: '#0D1117', padding: '12px', borderRadius: '8px', border: '1px solid #30363D' }}>{ai.draft_reply}</div>
+                                    <div style={{ fontSize: '13px', lineHeight: '1.6', color: '#C9D1D9', marginBottom: '12px', background: '#0D1117', padding: '12px', borderRadius: '8px', border: '1px solid #30363D' }}>{ai?.draft_reply}</div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                       <button className="btn-send" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => sendDraftReply(email)} disabled={sendingReplyIds.has(email.id)}>
                                         {sendingReplyIds.has(email.id) ? "Sending..." : "Send Reply"}
                                       </button>
                                       <button className="btn-sec" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => handleEmailSelect(email)}>Regenerate</button>
-                                      <button className="btn-sec" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => navigator.clipboard.writeText(ai.draft_reply)}>Copy</button>
+                                      <button className="btn-sec" style={{ minHeight: '32px', fontSize: '12px', padding: '0 12px' }} onClick={() => navigator.clipboard.writeText(ai?.draft_reply)}>Copy</button>
                                     </div>
                                   </>
                                 ) : (
@@ -2772,6 +2798,145 @@ const App = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {showVoiceModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: '#161B22', border: '1px solid #30363D', borderRadius: '16px', padding: '28px', width: '420px', maxWidth: '90%' }}>
+              <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>🎙️ WhatsApp Voice Briefing</div>
+              <div style={{ fontSize: '13px', color: '#8B949E', marginBottom: '20px' }}>Get your daily email summary as a voice note</div>
+
+              {/* Section 1 */}
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: '#F0A500', letterSpacing: '1px', fontWeight: 'bold' }}>Send briefing at</div>
+              <input 
+                type="time" 
+                value={scheduledTime} 
+                onChange={(e) => setScheduledTime(e.target.value)}
+                style={{ background: '#0D1117', border: '1px solid #30363D', borderRadius: '8px', padding: '10px 14px', color: '#E6EDF3', fontSize: '16px', width: '100%', marginTop: '6px', boxSizing: 'border-box', outline: 'none' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                {['06:00', '07:30', '08:00', '09:00'].map(t => {
+                  const isActive = scheduledTime === t;
+                  const label = parseInt(t.split(':')[0]) > 12 ? `${parseInt(t.split(':')[0]) - 12}:${t.split(':')[1]} PM` : `${parseInt(t.split(':')[0])}:${t.split(':')[1]} AM`;
+                  return (
+                    <div 
+                      key={t}
+                      onClick={() => setScheduledTime(t)}
+                      style={{ 
+                        background: isActive ? '#F0A500' : '#21262D', border: isActive ? '1px solid #F0A500' : '1px solid #30363D',
+                        borderRadius: '20px', padding: '6px 14px', fontSize: '12px', cursor: 'pointer',
+                        color: isActive ? '#0D1117' : '#8B949E', fontWeight: isActive ? '600' : 'normal'
+                      }}
+                    >
+                      {label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ height: '1px', background: '#30363D', margin: '20px 0' }}></div>
+
+              {/* Section 2 */}
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: '#F0A500', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '12px' }}>Voice note preview</div>
+              
+              {!voiceGenerated && !isGeneratingVoice && (
+                <button 
+                  onClick={generateVoiceBriefing}
+                  style={{ width: '100%', background: '#1AAB8A', color: 'white', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', border: 'none' }}
+                >
+                  ✨ Generate Voice Note
+                </button>
+              )}
+
+              {isGeneratingVoice && (
+                <div style={{ background: '#0D1117', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#F0A500', animation: `pulse 1.5s infinite ease-in-out ${i * 0.2}s` }}></div>
+                    ))}
+                  </div>
+                  <div style={{ color: '#8B949E', fontSize: '13px' }}>Generating your briefing...</div>
+                </div>
+              )}
+
+              {voiceGenerated && (
+                <div style={{ background: '#0D1117', borderRadius: '8px', padding: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div 
+                      onClick={() => {
+                        if (!audioElement) return;
+                        if (isPlayingVoice) {
+                          audioElement.pause();
+                          setIsPlayingVoice(false);
+                        } else {
+                          audioElement.play();
+                          setIsPlayingVoice(true);
+                        }
+                      }}
+                      style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#F0A500', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, color: '#0D1117', fontWeight: 'bold', fontSize: '12px' }}
+                    >
+                      {isPlayingVoice ? '||' : '▶'}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '14px', fontWeight: '500', color: '#E6EDF3' }}>Morning briefing ready</div>
+                      <div style={{ fontSize: '12px', color: '#8B949E' }}>{voiceDuration}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '24px', marginTop: '12px', padding: '0 4px' }}>
+                    {[...Array(10)].map((_, i) => (
+                      <div 
+                        key={i} 
+                        style={{ 
+                          flex: 1, background: isPlayingVoice ? '#F0A500' : '#30363D', borderRadius: '2px',
+                          height: isPlayingVoice ? `${[40, 70, 50, 90, 60, 100, 50, 80, 40, 100][i]}%` : '20%',
+                          transition: 'height 0.1s'
+                        }}
+                      ></div>
+                    ))}
+                  </div>
+                  <div style={{ textAlign: 'center', marginTop: '12px' }}>
+                    <button onClick={generateVoiceBriefing} style={{ background: 'none', border: 'none', color: '#8B949E', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>Regenerate</button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ height: '1px', background: '#30363D', margin: '20px 0' }}></div>
+
+              {/* Section 3 */}
+              <button 
+                onClick={sendToWhatsApp}
+                disabled={!voiceGenerated}
+                style={{ 
+                  width: '100%', background: '#25D366', color: 'white', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: voiceGenerated ? 'pointer' : 'not-allowed', opacity: voiceGenerated ? 1 : 0.5 
+                }}
+              >
+                📱 Send to WhatsApp Now
+              </button>
+
+              <button 
+                onClick={() => {
+                  showToast(`Briefing scheduled for ${scheduledTime}!`);
+                  setShowVoiceModal(false);
+                }}
+                style={{ 
+                  width: '100%', background: 'transparent', color: '#F0A500', borderRadius: '8px', padding: '12px', fontSize: '14px', border: '1px solid #F0A500', cursor: 'pointer', marginTop: '8px' 
+                }}
+              >
+                ⏰ Schedule for {scheduledTime}
+              </button>
+
+              <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                <button onClick={() => setShowVoiceModal(false)} style={{ background: 'none', border: 'none', color: '#8B949E', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {toast && (
+          <div style={{ position: 'fixed', bottom: '24px', right: '24px', background: '#161B22', border: '1px solid #1AAB8A', borderRadius: '8px', padding: '12px 16px', color: '#1AAB8A', fontSize: '13px', zIndex: 2000, boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+            {toast}
           </div>
         )}
 
