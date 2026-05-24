@@ -494,7 +494,7 @@ const App = () => {
           if (!selectedMailId && combined.length > 0) {
             setSelectedMailId(combined[0].id);
           }
-          analyzeBatch(combined.slice(0, 10));
+          runSmartAnalysis(combined);
           return combined;        });
       }
 
@@ -674,45 +674,82 @@ const App = () => {
     }
   };
 
-  const analyzeBatch = async (batch) => {
-    if (!Array.isArray(batch)) return;
-    const token = localStorage.getItem('mp_token');
-    if (!token || batch.length === 0) return;
-    const toAnalyze = batch.filter(m => !aiResults[m.id]);
-    if (toAnalyze.length === 0) return;
-    setIsAnalyzing(true);
+  const getAllCachedResults = async (userEmail) => {
     try {
-      const emailsToAnalyze = toAnalyze.slice(0, 10);
-      const batchResp = await fetch(`${API_BASE}/ai/analyze-batch`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ emails: emailsToAnalyze })
+      const token = localStorage.getItem('mp_token');
+      const resp = await fetch(`${API_BASE}/ai/cache`, {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!batchResp.ok) throw new Error("Batch analysis failed");
-      const batchData = await batchResp.json()
-      console.log("Batch response received:", batchData)
-      console.log("Results:", batchData.results)
-
-      if (batchData && batchData.results) {
-        setAiResults(prev => {
-          const newResults = { ...prev, ...batchData.results }
-          console.log("Total AI results stored:", Object.keys(newResults).length)
-          return newResults
-        })
-      } else {
-        console.error("Batch response missing results:", batchData)
-      }
-      // Refresh stats from Firestore via backend
-      fetchDashboardStats();
-    } catch (error) {
-      console.error("Failed to analyze batch:", error);
-    } finally {
-      setIsAnalyzing(false);
+      const data = await resp.json();
+      return data.cached || {};
+    } catch (e) {
+      console.error("Cache fetch failed:", e);
+      return {};
     }
   };
+
+  const saveAIResult = async (userEmail, msgId, safeData) => {
+    // Handled automatically by backend in /ai/analyze and /ai/analyze-batch
+    return Promise.resolve();
+  };
+
+  const runSmartAnalysis = async (emailsList) => {
+    if (!user?.email) return
+    
+    // Step 1: Load all cached from Firestore first
+    const cached = await getAllCachedResults(user.email)
+    console.log(`Firestore cache: ${Object.keys(cached).length} results`)
+    setAiResults(prev => ({ ...cached, ...prev }))
+    
+    // Step 2: Find only uncached emails
+    const uncached = emailsList.filter(e => !cached[e.id])
+    console.log(`Need to analyze: ${uncached.length} emails`)
+    
+    if (uncached.length === 0) {
+      console.log("All cached — no API calls needed!")
+      return
+    }
+    
+    // Step 3: Analyze only uncached, top 10
+    const toAnalyze = uncached.slice(0, 10)
+    setIsAnalyzing(true)
+    
+    try {
+      const token = localStorage.getItem('mp_token');
+      const resp = await fetch(`${API_BASE}/ai/analyze-batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ emails: toAnalyze })
+      })
+      const data = await resp.json()
+      
+      if (data.results) {
+        setAiResults(prev => ({ ...prev, ...data.results }))
+        
+        // Step 4: Save only AI fields to Firestore
+        for (const [msgId, aiData] of Object.entries(data.results)) {
+          const safeData = {
+            priority: aiData.priority || 'normal',
+            reason: aiData.reason || '',
+            deadline: aiData.deadline || null,
+            requires_reply: aiData.requires_reply || false,
+            summary: aiData.summary || null,
+            draft_reply: aiData.draft_reply || null,
+            messageId: msgId,
+            cachedAt: new Date().toISOString()
+          }
+          await saveAIResult(user.email, msgId, safeData)
+        }
+        console.log(`Saved ${Object.keys(data.results).length} to Firestore`)
+      }
+    } finally {
+      setIsAnalyzing(false)
+      fetchDashboardStats();
+    }
+  }
 
   const fetchFullEmail = async (id) => {
     if (!id) return;
@@ -933,6 +970,18 @@ const App = () => {
       const result = await resp.json()
       console.log("Single analyze result:", result)
       setAiResults(prev => ({ ...prev, [email.id]: result }))
+      
+      const safeData = {
+        priority: result.priority || 'normal',
+        reason: result.reason || '',
+        deadline: result.deadline || null,
+        requires_reply: result.requires_reply || false,
+        summary: result.summary || null,
+        draft_reply: result.draft_reply || null,
+        messageId: email.id,
+        cachedAt: new Date().toISOString()
+      }
+      await saveAIResult(user.email, email.id, safeData)
     } catch(e) {
       console.error('Auto analyze failed:', e)
       setAiResults(prev => ({ 

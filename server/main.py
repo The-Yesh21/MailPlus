@@ -252,12 +252,12 @@ def format_reply_bodies(reply_text: str) -> tuple[str, str]:
 
 
 def call_groq(prompt: str, system: str, max_tokens: int = 300):
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             completion = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="qwen/qwen3-32b",
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt}
@@ -276,7 +276,7 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
             import time
             error_str = str(e)
             if '429' in error_str:
-                wait = 2 * (attempt + 1)
+                wait = 3 * (attempt + 1)
                 print(f"Rate limit, waiting {wait}s")
                 time.sleep(wait)
                 continue
@@ -1097,6 +1097,19 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
 
 # ── AI endpoints ──────────────────────────────────────────────────────────────
 
+@app.get("/ai/cache")
+async def get_all_cached_results(user=Depends(get_current_user)):
+    user_email = user.get("email", "")
+    ai_results = {}
+    try:
+        results_ref = fs.collection("email_ai").document(user_email).collection("results")
+        docs = results_ref.stream()
+        for doc in docs:
+            ai_results[doc.id] = doc.to_dict()
+    except Exception as e:
+        print(f"Error fetching cache: {e}")
+    return {"cached": ai_results}
+
 @app.post("/ai/analyze")
 async def analyze_email(request: Request, user=Depends(get_current_user)):
     body         = await request.json()
@@ -1121,7 +1134,10 @@ JSON object, no markdown, no explanation, no extra text:
 
 From: {from_name}
 Subject: {subject}
-Preview: {body_preview[:400]}"""
+Preview: {body_preview[:250]}"""
+
+        estimated_tokens = len(combined_prompt.split()) * 1.3
+        print(f"Estimated tokens for {email_id}: {int(estimated_tokens)}")
 
         loop = asyncio.get_event_loop()
         raw = await loop.run_in_executor(
@@ -1215,7 +1231,10 @@ JSON object, no markdown, no explanation, no extra text:
 
 From: {from_name}
 Subject: {subject}
-Preview: {body_preview[:400]}"""
+Preview: {body_preview[:250]}"""
+
+            estimated_tokens = len(combined_prompt.split()) * 1.3
+            print(f"Estimated tokens for {email_id}: {int(estimated_tokens)}")
 
             loop = asyncio.get_event_loop()
             raw = await loop.run_in_executor(
@@ -1266,7 +1285,7 @@ Preview: {body_preview[:400]}"""
                 save_email_ai_result, user_email, email_id, result
             ))
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.5)
 
         except Exception as e:
             print(f"Batch error for {email.get('id')}: {traceback.format_exc()}")
