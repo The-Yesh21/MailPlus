@@ -565,7 +565,7 @@ STRICT OUTPUT RULES:
 - User's name is "{name}". Use it 1-2 times naturally.
 - Output ONLY the spoken script. Zero markdown, zero bullet points, zero headers, zero asterisks, zero dashes.
 - Target 180-220 words — thorough but under 90 seconds spoken.
-- Natural spoken sentences. Use "..." for pauses between sections.
+- Natural spoken sentences. Write in a conversational, human-like rhythm. Use standard punctuation (periods, commas) to control pacing.
 - Structure in this exact order (skip a section only if it has zero data):
   1. Quick 2-sentence overview: total emails, urgent count, reply count, deadline count.
   2. Work/Projects highlights (if any) — mention specific senders and what they need.
@@ -694,11 +694,6 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     full_script = raw_script.strip()
     for ch in ["**", "*", "##", "#", "- ", "• "]:
         full_script = full_script.replace(ch, "")
-
-    # Natural TTS pauses
-    full_script = full_script.replace(". ", "... ")
-    full_script = full_script.replace("! ", "!... ")
-    full_script = full_script.replace("? ", "?... ")
 
     # Generate TTS audio
     filename = f"{uuid.uuid4().hex}.wav"
