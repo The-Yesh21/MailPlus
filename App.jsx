@@ -2389,6 +2389,7 @@ const App = () => {
             markEmailAsRead={markEmailAsRead}
             DeadlineCountdown={DeadlineCountdown}
             isDeadlineExpired={isDeadlineExpired}
+            setShowVoiceModal={setShowVoiceModal}
           />
         )}
 

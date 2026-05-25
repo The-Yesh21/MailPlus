@@ -997,7 +997,7 @@ const getTimeLabel = (mail) => {
   return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, markEmailAsRead, DeadlineCountdown, isDeadlineExpired }) => {
+const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, markEmailAsRead, DeadlineCountdown, isDeadlineExpired, setShowVoiceModal }) => {
   const [sel, setSel] = useState(null);
   const [activeChip, setActiveChip] = useState(null);
   const [fyiExpanded, setFyiExpanded] = useState(false);
@@ -1237,6 +1237,14 @@ const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, markEmailAsR
                 <div className="ai-subcopy">
                   {urgent.length} signals are time-sensitive, {action.length} messages need a reply, and your most active sender today is {busiestSender?.[0] || 'still emerging'}.
                 </div>
+                {setShowVoiceModal && (
+                  <button 
+                    onClick={() => setShowVoiceModal(true)} 
+                    style={{ marginTop: '24px', display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#F0A500', color: '#0D1117', border: 'none', borderRadius: '999px', padding: '10px 20px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 8px 24px rgba(240, 165, 0, 0.25)' }}
+                  >
+                    <span>🎙️</span> Generate Voice Note
+                  </button>
+                )}
               </div>
               <div className="ai-signal-grid">
                 <div className="ai-signal"><span className="ai-signal-value">{urgent.length}</span><span className="ai-signal-label">Urgent signals</span></div>
