@@ -483,20 +483,17 @@ const App = () => {
         tag: getUrgencyTag(mail)
       }));
       
-      if (newMails.length > 0) {
-        setMails(prevMails => {
-          const prev = Array.isArray(prevMails) ? prevMails : [];
-          const existingIds = new Set(prev.map(m => m.id));
-          const filteredNew = newMails.filter(m => !existingIds.has(m.id));
-          const combined = [...filteredNew, ...prev];
-          combined.sort((a, b) => (b.internal_date || 0) - (a.internal_date || 0));
-          localStorage.setItem(`mp_mails_${user.email}`, JSON.stringify(combined));
-          if (!selectedMailId && combined.length > 0) {
-            setSelectedMailId(combined[0].id);
-          }
-          runSmartAnalysis(combined);
-          return combined;        });
-      }
+      setMails(prevMails => {
+        // Simply sync the state directly to the new unread emails fetched from backend
+        const combined = [...newMails];
+        combined.sort((a, b) => (b.internal_date || 0) - (a.internal_date || 0));
+        
+        localStorage.setItem(`mp_mails_${user.email}`, JSON.stringify(combined));
+        if (!selectedMailId && combined.length > 0) {
+          setSelectedMailId(combined[0].id);
+        }
+        runSmartAnalysis(combined);
+        return combined;      });
 
       const elapsed = Date.now() - startTime;
       if (elapsed < 1200) {
@@ -616,6 +613,7 @@ const App = () => {
     if (activeTab === 'Priority Feed') {
       return mails
         .filter(m => {
+          if (m.is_read) return false;
           const ai = aiResults[m.id];
           if (!ai) return false;
           // Exclude urgent emails whose deadline has already passed
@@ -2796,6 +2794,44 @@ const App = () => {
 
                           {isExpanded && (
                             <div style={{ marginTop: '16px', borderTop: '1px solid #21262D', paddingTop: '16px' }} onClick={e => e.stopPropagation()}>
+                              
+                              <div style={{ marginBottom: '24px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8B949E', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>🕒</span> THREAD HISTORY
+                                </div>
+                                <div style={{ background: '#0D1117', padding: '16px', borderRadius: '8px', border: '1px solid #30363D', fontSize: '13px', color: '#C9D1D9' }}>
+                                  <div style={{ marginBottom: email.labels?.length ? '12px' : '0' }}>
+                                    Received on {new Date(email.date).toLocaleDateString()} at {new Date(email.date).toLocaleTimeString()}
+                                  </div>
+                                  {email.labels && email.labels.length > 0 && (
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                      {email.labels.map(l => (
+                                        <span key={l} style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', color: '#8B949E' }}>
+                                          {l.replace('CATEGORY_', '').toLowerCase()}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div style={{ marginBottom: '24px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8B949E', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>✉️</span> EMAIL CONTENT
+                                </div>
+                                {fullBodies[email.id] ? (
+                                  <div style={{ background: '#0D1117', padding: '16px', borderRadius: '8px', border: '1px solid #30363D', marginBottom: '8px', overflowX: 'auto' }}>
+                                    <EmailPreview html={fullBodies[email.id]} />
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <button className="btn-sec" style={{ fontSize: '12px', padding: '6px 12px', minHeight: '30px' }} onClick={(e) => { e.stopPropagation(); fetchFullEmail(email.id); }}>
+                                      {isFetchingBody ? "Loading..." : "View Full Email"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
                               <div style={{ marginBottom: '16px' }}>
                                 <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8B949E', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   <span>✨</span> AI Context Summary

@@ -52,7 +52,6 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ALGORITHM            = "HS256"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid"
@@ -284,6 +283,11 @@ def build_prompt(from_name, subject, body_preview):
   "summary": "exactly 2 sentences about what this email is and what action is needed",
   "draft_reply": "a complete professional reply email, not a summary. Use greeting, concise body, and closing signed as Yeshwanth. Use line breaks between paragraphs. Use **bold** only around important commitments, deadlines, blockers, requested actions, or decisions that need attention."
 }}
+
+Classification rules for priority:
+- "urgent": ONLY if it requires immediate action today, involves critical project deadlines, financial issues, or is a direct request from a person waiting on you.
+- "low": Newsletters, automated alerts, marketing, promotional emails (e.g., Internshala, generic updates), and anything that does not require a direct personal response.
+- "normal": Everything else.
 
 Draft reply rules:
 - Reply directly to the sender's request. Do not describe the email or say it is waiting for a response.
@@ -803,7 +807,7 @@ async def list_emails(user=Depends(get_current_user),
             resp = await client.get(
                 "https://gmail.googleapis.com/gmail/v1/users/me/messages",
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={"labelIds": ["INBOX"], "maxResults": max_results}
+                params={"labelIds": ["INBOX"], "q": "newer_than:14d is:unread", "maxResults": max_results}
             )
             if resp.status_code == 401:
                 raise HTTPException(status_code=401, detail="token_expired")
@@ -1114,6 +1118,11 @@ JSON object, no markdown, no explanation, no extra text:
   "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
 }}
 
+Classification rules for priority:
+- "urgent": ONLY if it requires immediate action today, involves critical project deadlines, financial issues, or is a direct request from a person waiting on you.
+- "low": Newsletters, automated alerts, marketing, promotional emails (e.g., Internshala, generic updates), and anything that does not require a direct personal response.
+- "normal": Everything else.
+
 From: {from_name}
 Subject: {subject}
 Preview: {body_preview[:250]}"""
@@ -1210,6 +1219,11 @@ JSON object, no markdown, no explanation, no extra text:
   "summary": "exactly 2 sentences about what this email is about and what action is needed",
   "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
 }}
+
+Classification rules for priority:
+- "urgent": ONLY if it requires immediate action today, involves critical project deadlines, financial issues, or is a direct request from a person waiting on you.
+- "low": Newsletters, automated alerts, marketing, promotional emails (e.g., Internshala, generic updates), and anything that does not require a direct personal response.
+- "normal": Everything else.
 
 From: {from_name}
 Subject: {subject}
