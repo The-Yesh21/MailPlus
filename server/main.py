@@ -821,14 +821,14 @@ def me(user=Depends(get_current_user)):
 
 @app.get("/emails")
 async def list_emails(user=Depends(get_current_user),
-                      max_results: int = Query(50, alias="maxResults")):
+                      max_results: int = Query(100, alias="maxResults")):
     try:
         access_token = user["access_token"]
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 "https://gmail.googleapis.com/gmail/v1/users/me/messages",
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={"labelIds": ["INBOX"], "q": "newer_than:14d is:unread", "maxResults": max_results}
+                params={"labelIds": ["INBOX"], "q": "newer_than:14d", "maxResults": max_results}
             )
             if resp.status_code == 401:
                 raise HTTPException(status_code=401, detail="token_expired")

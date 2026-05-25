@@ -16,6 +16,7 @@ const EmailPreview = ({ html }) => {
       <html>
       <head>
       <meta charset="utf-8">
+      <base target="_blank">
       <style>
         body { 
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
@@ -53,7 +54,7 @@ const EmailPreview = ({ html }) => {
   return (
     <iframe
       ref={iframeRef}
-      sandbox="allow-same-origin"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       style={{ width: '100%', border: 'none', minHeight: '100px', display: 'block' }}
       onLoad={handleLoad}
       title="Email Preview"
@@ -484,7 +485,7 @@ const App = () => {
       }));
       
       setMails(prevMails => {
-        // Simply sync the state directly to the new unread emails fetched from backend
+        // Simple sync: the backend now returns up to 100 emails (read and unread) from the last 14 days
         const combined = [...newMails];
         combined.sort((a, b) => (b.internal_date || 0) - (a.internal_date || 0));
         
