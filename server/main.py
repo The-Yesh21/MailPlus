@@ -327,20 +327,41 @@ def analyze_email_hf(from_name, subject, body_preview):
         "draft_reply": data.get("draft_reply", "Draft generation failed.")
     }
 
-from elevenlabs.client import ElevenLabs
+import numpy as np
+import soundfile as sf
+import io
+from kokoro import KPipeline
+
+kokoro_pipeline = None
+
+def get_kokoro_pipeline():
+    global kokoro_pipeline
+    if kokoro_pipeline is None:
+        print("Loading Kokoro TTS pipeline...")
+        kokoro_pipeline = KPipeline(lang_code='a')
+        print("Kokoro TTS ready!")
+    return kokoro_pipeline
 
 def generate_voice_briefing(script: str) -> bytes:
     try:
-        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
-        audio = client.text_to_speech.convert(
-            voice_id="21m00Tcm4TlvDq8ikWAM",
-            text=script,
-            model_id="eleven_multilingual_v2"
-        )
-        audio_bytes = b"".join(audio)
-        return audio_bytes
+        pipeline = get_kokoro_pipeline()
+        generator = pipeline(script, voice='af_bella', speed=1.0)
+        
+        audio_chunks = []
+        for i, (gs, ps, audio) in enumerate(generator):
+            audio_chunks.append(audio)
+            
+        if not audio_chunks:
+            print("Kokoro: No audio chunks generated")
+            return None
+            
+        full_audio = np.concatenate(audio_chunks)
+        
+        buffer = io.BytesIO()
+        sf.write(buffer, full_audio, 24000, format='WAV')
+        return buffer.getvalue()
     except Exception as e:
-        print(f"ElevenLabs error: {e}")
+        print(f"Kokoro TTS error: {e}")
         return None
 
 
