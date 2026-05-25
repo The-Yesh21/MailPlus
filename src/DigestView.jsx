@@ -1009,18 +1009,19 @@ const DigestView = ({ mails, aiResults, analyzingIds, analyzeEmail, markEmailAsR
     if (ai.deadline && isDeadlineExpired(ai.deadline, mail.internal_date)) return false;
     return true;
   };
+  const unreadMails = mails.filter(m => !m.is_read);
 
-  const urgent = mails.filter((mail) => isEffectivelyUrgent(mail));
-  const action = mails.filter((mail) => aiResults[mail.id]?.requires_reply && !isEffectivelyUrgent(mail));
-  const briefing = mails.filter((mail) => {
+  const urgent = unreadMails.filter((mail) => isEffectivelyUrgent(mail));
+  const action = unreadMails.filter((mail) => aiResults[mail.id]?.requires_reply && !isEffectivelyUrgent(mail));
+  const briefing = unreadMails.filter((mail) => {
     const ai = aiResults[mail.id];
     if (!ai) return false;
     if (ai.priority === 'urgent' && ai.deadline && isDeadlineExpired(ai.deadline, mail.internal_date)) return true;
     return ai.priority === 'normal' && !ai.requires_reply;
   });
-  const fyi = mails.filter((mail) => !aiResults[mail.id] || aiResults[mail.id]?.priority === 'low');
+  const fyi = unreadMails.filter((mail) => !aiResults[mail.id] || aiResults[mail.id]?.priority === 'low');
 
-  const hero = urgent[0] || action[0] || briefing[0] || mails[0];
+  const hero = urgent[0] || action[0] || briefing[0] || unreadMails[0];
   const secondaryUrgent = urgent.filter((mail) => mail.id !== hero?.id);
   const actionCards = action.filter((mail) => mail.id !== hero?.id);
   const briefingCards = briefing.filter((mail) => mail.id !== hero?.id);
