@@ -698,7 +698,7 @@ const App = () => {
     // Step 1: Load all cached from Firestore first
     const cached = await getAllCachedResults(user.email)
     console.log(`Firestore cache: ${Object.keys(cached).length} results`)
-    setAiResults(prev => ({ ...cached, ...prev }))
+    setAiResults(prev => ({ ...prev, ...cached }))
     
     // Step 2: Find only uncached emails
     const uncached = emailsList.filter(e => !cached[e.id])
@@ -906,7 +906,9 @@ const App = () => {
         },
         body: JSON.stringify({
           emails: mails.slice(0, 10),
-          ai_results: aiResults
+          ai_results: typeof aiResults === 'object' && !Array.isArray(aiResults) 
+            ? aiResults 
+            : {}
         })
       });
       if (!resp.ok) throw new Error("Voice generation failed");
