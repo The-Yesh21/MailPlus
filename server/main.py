@@ -345,23 +345,23 @@ def get_kokoro_pipeline():
 def generate_voice_briefing(script: str) -> bytes:
     try:
         pipeline = get_kokoro_pipeline()
-        generator = pipeline(script, voice='af_bella', speed=1.0)
-        
+        generator = pipeline(
+            script,
+            voice='af_bella',
+            speed=1.1
+        )
         audio_chunks = []
         for i, (gs, ps, audio) in enumerate(generator):
             audio_chunks.append(audio)
-            
         if not audio_chunks:
-            print("Kokoro: No audio chunks generated")
             return None
-            
         full_audio = np.concatenate(audio_chunks)
-        
         buffer = io.BytesIO()
         sf.write(buffer, full_audio, 24000, format='WAV')
-        return buffer.getvalue()
+        buffer.seek(0)
+        return buffer.read()
     except Exception as e:
-        print(f"Kokoro TTS error: {e}")
+        print(f"Kokoro error: {traceback.format_exc()}")
         return None
 
 
@@ -620,80 +620,35 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
         if e.get("ai") and e.get("id"):
             ai_results.setdefault(e["id"], e["ai"])
 
-    # Phonetic name for Kokoro TTS
-    raw_name = user.get("name", "").split()[0]
-    phonetic_name = phonetic_name_for_tts(raw_name)
+    name = user.get("name", "").split()[0]
+    urgent = [e for e in emails if ai_results.get(e["id"], {}).get("priority") == "urgent"]
+    reply_needed = [e for e in emails if ai_results.get(e["id"], {}).get("requires_reply") and ai_results.get(e["id"], {}).get("priority") != "urgent"]
 
-    total = len(emails)
+    parts = []
+    parts.append(f"Hey {name}! MailPulse here.")
 
-    # Only include urgent emails whose deadline has NOT expired
-    urgent_emails = []
-    for e in emails:
-        ai = ai_results.get(e.get("id"), {})
-        if ai.get("priority") != "urgent":
-            continue
-        deadline = ai.get("deadline")
-        email_date = e.get("internal_date", 0)
-        if deadline and is_deadline_expired_backend(deadline, email_date):
-            continue  # deadline passed — not urgent anymore
-        urgent_emails.append({**e, "ai": ai})
+    if urgent:
+        parts.append(f"You've got {len(urgent)} urgent emails right now.")
+        for i, e in enumerate(urgent[:3]):
+            ai = ai_results.get(e["id"], {})
+            s = ai.get("summary", e.get("snippet", ""))
+            parts.append(f"From {e['from_name']}... {s}")
+            d = ai.get("deadline")
+            if d and d not in ["null", "None", None]:
+                parts.append(f"Deadline is {d}.")
+    else:
+        parts.append("No urgent emails. You are clear!")
 
-    reply_emails = [
-        {**e, "ai": ai_results.get(e.get("id"), {})}
-        for e in emails
-        if ai_results.get(e.get("id"), {}).get("requires_reply")
-        and ai_results.get(e.get("id"), {}).get("priority") != "urgent"
-    ]
-    top_emails = [
-        {**e, "ai": ai_results.get(e.get("id"), {})}
-        for e in emails[:5]
-    ]
+    if reply_needed:
+        parts.append(f"{len(reply_needed)} emails need your reply.")
+        for e in reply_needed[:2]:
+            parts.append(f"{e['from_name']} about {e['subject']}.")
 
-    categories = categorize_emails(emails, ai_results)
+    parts.append(f"Have a great day {name}!")
 
-    prompt = build_briefing_prompt(
-        phonetic_name, total, urgent_emails, reply_emails, top_emails, categories, tone
-    )
+    full_script = " ".join(parts)
+
     loop = asyncio.get_event_loop()
-    raw_script = await loop.run_in_executor(
-        None,
-        partial(call_groq, prompt,
-                "You are a voice assistant delivering a morning briefing. "
-                "Output ONLY the spoken script — no markdown, no bullet points, no headers, no asterisks.",
-                500)
-    )
-
-    # Fallback if Groq fails
-    if not raw_script:
-        action_items = categories.get("action_items", [])
-        if urgent_emails or reply_emails:
-            parts = [f"Hey {phonetic_name}! ... MailPulse here. ... "
-                     f"You've got {total} emails. ... "]
-            if urgent_emails:
-                parts.append(f"{len(urgent_emails)} are urgent. ... ")
-            if reply_emails:
-                parts.append(f"{len(reply_emails)} need a reply. ... ")
-            if action_items:
-                a = action_items[0]
-                parts.append(f"Top action: {a.get('from_name','Someone')} — {a.get('subject','')}. ... ")
-            parts.append(f"Go get it, {phonetic_name}!")
-            raw_script = "".join(parts)
-        else:
-            top_summary = " ... ".join(
-                f"{e.get('from_name','Someone')}: {e.get('subject','an email')}"
-                for e in top_emails[:3]
-            )
-            raw_script = (
-                f"Hey {phonetic_name}! ... MailPulse here. ... "
-                f"Nothing urgent today — your inbox is actually behaving itself. ... "
-                f"Here's what came in: ... {top_summary}. ... "
-                f"Have a great day!"
-            )
-
-    # Strip any markdown Groq might sneak in
-    full_script = raw_script.strip()
-    for ch in ["**", "*", "##", "#", "- ", "• "]:
-        full_script = full_script.replace(ch, "")
 
     # Generate TTS audio
     filename = f"{uuid.uuid4().hex}.wav"
