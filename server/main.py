@@ -69,6 +69,86 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── HuggingFace Inference API Zero-Shot Classification ───────────────────────
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+
+async def classify_email(text: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                HF_API_URL,
+                headers={"Authorization": f"Bearer {HF_TOKEN}"},
+                json={
+                    "inputs": text[:500],
+                    "parameters": {
+                        "candidate_labels": [
+                            "urgent reply needed",
+                            "deadline mentioned",
+                            "action required",
+                            "important information",
+                            "low priority",
+                            "promotional or newsletter"
+                        ]
+                    }
+                }
+            )
+            data = resp.json()
+            
+            if "error" in data:
+                print(f"HF API error: {data['error']}")
+                return None
+                
+            labels = data.get("labels", [])
+            scores = data.get("scores", [])
+            result = dict(zip(labels, scores))
+            
+            urgent_score = result.get("urgent reply needed", 0)
+            deadline_score = result.get("deadline mentioned", 0)
+            action_score = result.get("action required", 0)
+            promo_score = result.get("promotional or newsletter", 0)
+            
+            if promo_score > 0.6:
+                priority = "low"
+                requires_reply = False
+            elif urgent_score > 0.4 or deadline_score > 0.4:
+                priority = "urgent"
+                requires_reply = True
+            elif action_score > 0.35:
+                priority = "normal"
+                requires_reply = True
+            else:
+                priority = "normal"
+                requires_reply = False
+            
+            deadline = None
+            import re
+            deadline_patterns = [
+                r'by (today|tomorrow|monday|tuesday|wednesday|thursday|friday)',
+                r'due (date|by|on)',
+                r'deadline',
+                r'by \d{1,2}(st|nd|rd|th)',
+                r'before \d{1,2}(am|pm)',
+                r'eod|eow|asap'
+            ]
+            text_lower = text.lower()
+            for pattern in deadline_patterns:
+                match = re.search(pattern, text_lower)
+                if match:
+                    deadline = match.group(0)
+                    break
+            
+            return {
+                "priority": priority,
+                "requires_reply": requires_reply,
+                "deadline": deadline,
+                "reason": f"Classified as {priority} (urgency: {urgent_score:.2f}, action: {action_score:.2f})",
+                "scores": result
+            }
+    except Exception as e:
+        print(f"Classification error: {e}")
+        return None
+
 # ── Firestore helpers ────────────────────────────────────────────────────────
 
 def increment_user_stats(user_email: str, emails_analyzed=0, urgent=0, replies=0, voice=0):
@@ -1078,68 +1158,69 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 
     loop = asyncio.get_event_loop()
     try:
-        combined_prompt = f"""Analyze this email. Reply with ONLY a valid 
-JSON object, no markdown, no explanation, no extra text:
-{{
-  "priority": "urgent" or "normal" or "low",
-  "reason": "one sentence why",
-  "deadline": "deadline phrase or null",
-  "requires_reply": true or false,
-  "summary": "exactly 2 sentences about what this email is about and what action is needed",
-  "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
-}}
+        # Step 1: Run classify_email for priority/urgency
+        classification = await classify_email(f"{subject} {body_preview}")
+        if not classification:
+            classification = {
+                "priority": "normal",
+                "requires_reply": False,
+                "deadline": None,
+                "reason": "Could not classify"
+            }
 
-Classification rules for priority:
-- "urgent": ONLY if it requires immediate action today, involves critical project deadlines, financial issues, or is a direct request from a person waiting on you.
-- "low": Newsletters, automated alerts, marketing, promotional emails (e.g., Internshala, generic updates), and anything that does not require a direct personal response.
-- "normal": Everything else.
+        # Step 2: Use Groq ONLY for summary and draft_reply
+        combined_prompt = f"""For this email write:
+1. SUMMARY: 2 sentences about what it is and what action is needed
+2. DRAFT: 3 sentence professional reply signed as Yeshwanth
 
 From: {from_name}
 Subject: {subject}
-Preview: {body_preview[:250]}"""
+Preview: {body_preview[:300]}
 
-        estimated_tokens = len(combined_prompt.split()) * 1.3
-        print(f"Estimated tokens for {email_id}: {int(estimated_tokens)}")
+Reply in this exact format:
+SUMMARY: <2 sentences>
+DRAFT: <3 sentences>"""
 
-        loop = asyncio.get_event_loop()
         raw = await loop.run_in_executor(
             None,
             partial(call_groq, combined_prompt,
-            "You are an email assistant. Reply ONLY with valid JSON. No markdown. No explanation. No text outside the JSON object.",
-            500)
+            "You are an email assistant. Follow the format exactly.",
+            300)
         )
-        parsed = parse_priority_json(raw)
 
-        summary_raw = parsed.get("summary")
-        if not summary_raw or not isinstance(summary_raw, str) or len(summary_raw.strip()) < 10:
-            summary_raw = f"Email from {from_name} about {subject}."
-            
-        draft_raw = parsed.get("draft_reply")
-        if not draft_raw or not isinstance(draft_raw, str) or len(draft_raw.strip()) < 10:
-            draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
+        summary = ""
+        draft = ""
+        if raw:
+            if "SUMMARY:" in raw and "DRAFT:" in raw:
+                parts = raw.split("DRAFT:")
+                summary = parts[0].replace("SUMMARY:", "").strip()
+                draft = parts[1].strip()
+            else:
+                summary = raw[:200]
+                draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
 
-        is_urgent       = parsed.get("priority") == "urgent"
-        has_valid_draft = False
+        is_urgent       = classification["priority"] == "urgent"
+        has_valid_draft = bool(draft)
 
         result = {
             "email_id":      email_id,
-            "priority":      parsed.get("priority", "normal"),
-            "reason":        parsed.get("reason", ""),
-            "deadline":      parsed.get("deadline", None),
-            "requires_reply":parsed.get("requires_reply", False),
-            "summary":       summary_raw,
-            "draft_reply":   draft_raw,
+            "priority":      classification["priority"],
+            "reason":        classification["reason"],
+            "deadline":      classification["deadline"],
+            "requires_reply":classification["requires_reply"],
+            "summary":       summary or body_preview[:200],
+            "draft_reply":   draft,
             "analyzed_at":   datetime.now(timezone.utc).isoformat()   # for live deadline countdown
         }
 
         # Build activity item for the feed
-        icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
-        text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if parsed.get("priority") == "low" else "Analyzed email")
+        icon = "🚨" if is_urgent else ("✅" if classification["priority"] == "low" else "✉️")
+        text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if classification["priority"] == "low" else "Analyzed email")
         activity_item = {
             "icon":     icon,
             "text":     text_desc,
             "time":     datetime.now(timezone.utc).strftime("%H:%M"),
-            "priority": parsed.get("priority", "normal")
+            "priority": classification["priority"]
         }
 
         # Persist to Firestore (non-blocking)
@@ -1173,6 +1254,8 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
     total_analyzed = total_urgent = total_replies = 0
     activity_items = []
 
+    loop = asyncio.get_event_loop()
+
     for email in emails:
         try:
             email_id     = email.get("id", "")
@@ -1180,56 +1263,58 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             subject      = email.get("subject", "")
             body_preview = email.get("body_preview", "")
 
-            combined_prompt = f"""Analyze this email. Reply with ONLY a valid 
-JSON object, no markdown, no explanation, no extra text:
-{{
-  "priority": "urgent" or "normal" or "low",
-  "reason": "one sentence why",
-  "deadline": "deadline phrase or null",
-  "requires_reply": true or false,
-  "summary": "exactly 2 sentences about what this email is about and what action is needed",
-  "draft_reply": "3 sentence professional reply signed as Yeshwanth, no subject line"
-}}
+            # Step 1: Run classify_email for priority/urgency
+            classification = await classify_email(f"{subject} {body_preview}")
+            if not classification:
+                classification = {
+                    "priority": "normal",
+                    "requires_reply": False,
+                    "deadline": None,
+                    "reason": "Could not classify"
+                }
 
-Classification rules for priority:
-- "urgent": ONLY if it requires immediate action today, involves critical project deadlines, financial issues, or is a direct request from a person waiting on you.
-- "low": Newsletters, automated alerts, marketing, promotional emails (e.g., Internshala, generic updates), and anything that does not require a direct personal response.
-- "normal": Everything else.
+            # Step 2: Use Groq ONLY for summary and draft_reply
+            combined_prompt = f"""For this email write:
+1. SUMMARY: 2 sentences about what it is and what action is needed
+2. DRAFT: 3 sentence professional reply signed as Yeshwanth
 
 From: {from_name}
 Subject: {subject}
-Preview: {body_preview[:250]}"""
+Preview: {body_preview[:300]}
 
-            estimated_tokens = len(combined_prompt.split()) * 1.3
-            print(f"Estimated tokens for {email_id}: {int(estimated_tokens)}")
+Reply in this exact format:
+SUMMARY: <2 sentences>
+DRAFT: <3 sentences>"""
 
-            loop = asyncio.get_event_loop()
             raw = await loop.run_in_executor(
                 None,
                 partial(call_groq, combined_prompt,
-                "You are an email assistant. Reply ONLY with valid JSON. No markdown. No explanation. No text outside the JSON object.",
-                500)
+                "You are an email assistant. Follow the format exactly.",
+                300)
             )
-            parsed = parse_priority_json(raw)
 
-            summary_raw = parsed.get("summary")
-            if not summary_raw or not isinstance(summary_raw, str) or len(summary_raw.strip()) < 10:
-                summary_raw = f"Email from {from_name} about {subject}."
-                
-            draft_raw = parsed.get("draft_reply")
-            if not draft_raw or not isinstance(draft_raw, str) or len(draft_raw.strip()) < 10:
-                draft_raw = f"Hi {from_name},\n\nThank you for your email regarding {subject}. I will get back to you shortly.\n\nBest regards,\nYeshwanth"
+            summary = ""
+            draft = ""
+            if raw:
+                if "SUMMARY:" in raw and "DRAFT:" in raw:
+                    parts = raw.split("DRAFT:")
+                    summary = parts[0].replace("SUMMARY:", "").strip()
+                    draft = parts[1].strip()
+                else:
+                    summary = raw[:200]
+                    draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
 
-            is_urgent       = parsed.get("priority") == "urgent"
-            has_valid_draft = False
+            is_urgent       = classification["priority"] == "urgent"
+            has_valid_draft = bool(draft)
 
             result = {
-                "priority":      parsed.get("priority", "normal"),
-                "reason":        parsed.get("reason", ""),
-                "deadline":      parsed.get("deadline", None),
-                "requires_reply":parsed.get("requires_reply", False),
-                "summary":       summary_raw,
-                "draft_reply":   draft_raw
+                "priority":      classification["priority"],
+                "reason":        classification["reason"],
+                "deadline":      classification["deadline"],
+                "requires_reply":classification["requires_reply"],
+                "summary":       summary or body_preview[:200],
+                "draft_reply":   draft,
+                "analyzed_at":   datetime.now(timezone.utc).isoformat()
             }
             results[email_id] = result
 
@@ -1238,13 +1323,13 @@ Preview: {body_preview[:250]}"""
             if is_urgent:    total_urgent  += 1
             if has_valid_draft: total_replies += 1
 
-            icon = "🚨" if is_urgent else ("✅" if parsed.get("priority") == "low" else "✉️")
-            text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if parsed.get("priority") == "low" else "Analyzed email")
+            icon = "🚨" if is_urgent else ("✅" if classification["priority"] == "low" else "✉️")
+            text_desc = "Analyzed urgent email" if is_urgent else ("Analyzed low priority email" if classification["priority"] == "low" else "Analyzed email")
             activity_items.append({
                 "icon":     icon,
                 "text":     text_desc,
                 "time":     datetime.now(timezone.utc).strftime("%H:%M"),
-                "priority": parsed.get("priority", "normal")
+                "priority": classification["priority"]
             })
 
             # Save individual AI result to Firestore (non-blocking)
