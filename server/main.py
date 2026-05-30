@@ -428,7 +428,7 @@ def generate_voice_briefing(script: str) -> bytes:
         generator = pipeline(
             script,
             voice='af_bella',
-            speed=1.1
+            speed=0.95
         )
         audio_chunks = []
         for i, (gs, ps, audio) in enumerate(generator):
@@ -701,32 +701,93 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
             ai_results.setdefault(e["id"], e["ai"])
 
     name = user.get("name", "").split()[0]
-    urgent = [e for e in emails if ai_results.get(e["id"], {}).get("priority") == "urgent"]
-    reply_needed = [e for e in emails if ai_results.get(e["id"], {}).get("requires_reply") and ai_results.get(e["id"], {}).get("priority") != "urgent"]
+
+    unread_emails = [e for e in emails if not e.get("is_read", True)]
+    urgent = [e for e in unread_emails if ai_results.get(e["id"], {}).get("priority") == "urgent"]
+    reply_needed = [e for e in unread_emails if ai_results.get(e["id"], {}).get("requires_reply") and ai_results.get(e["id"], {}).get("priority") != "urgent"]
+    total_unread = len(unread_emails)
 
     parts = []
-    parts.append(f"Hey {name}! MailPulse here.")
 
-    if urgent:
-        parts.append(f"You've got {len(urgent)} urgent emails right now.")
-        for i, e in enumerate(urgent[:3]):
-            ai = ai_results.get(e["id"], {})
-            s = ai.get("summary", e.get("snippet", ""))
-            parts.append(f"From {e['from_name']}... {s}")
-            d = ai.get("deadline")
-            if d and d not in ["null", "None", None]:
-                parts.append(f"Deadline is {d}.")
+    # Warm personal opener based on time
+    from datetime import datetime
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
     else:
-        parts.append("No urgent emails. You are clear!")
+        greeting = "Good evening"
 
-    if reply_needed:
-        parts.append(f"{len(reply_needed)} emails need your reply.")
-        for e in reply_needed[:2]:
-            parts.append(f"{e['from_name']} about {e['subject']}.")
+    parts.append(
+        f"{greeting}, {name}. "
+        f"Here's what's waiting for you in your inbox."
+    )
 
-    parts.append(f"Have a great day {name}!")
+    if total_unread == 0:
+        parts.append(
+            "Great news — you're completely caught up. "
+            "Your inbox is clean and there's nothing urgent pending. "
+            "Enjoy your day!"
+        )
+    else:
+        parts.append(
+            f"You have {total_unread} unread "
+            f"{'email' if total_unread == 1 else 'emails'} today."
+        )
+
+        if urgent:
+            parts.append(
+                f"{'One email needs' if len(urgent) == 1 else str(len(urgent)) + ' emails need'} "
+                f"your immediate attention."
+            )
+            for e in urgent[:3]:
+                ai = ai_results.get(e["id"], {})
+                summary = ai.get("summary", "").strip()
+                sender = e.get("from_name", "Someone")
+                deadline = ai.get("deadline")
+                
+                if summary and len(summary) > 15:
+                    parts.append(
+                        f"{sender} reached out — {summary}"
+                    )
+                else:
+                    parts.append(
+                        f"You have an urgent message from {sender} "
+                        f"about {e.get('subject', 'an important matter')}."
+                    )
+                
+                if deadline and deadline not in ["null", "None", None, ""]:
+                    parts.append(f"This one has a deadline — {deadline}.")
+
+        if reply_needed:
+            names = [e.get("from_name", "someone") for e in reply_needed[:3]]
+            if len(names) == 1:
+                names_str = names[0]
+            elif len(names) == 2:
+                names_str = f"{names[0]} and {names[1]}"
+            else:
+                names_str = f"{names[0]}, {names[1]} and {len(reply_needed) - 2} others"
+            
+            parts.append(
+                f"Also, {names_str} "
+                f"{'is' if len(reply_needed) == 1 else 'are'} waiting to hear back from you."
+            )
+
+        if not urgent and not reply_needed and total_unread > 0:
+            parts.append(
+                "None of them are urgent — "
+                "take your time going through them when you're ready."
+            )
+
+    parts.append(
+        f"That's your briefing for now, {name}. "
+        "Your full inbox is ready in MailPulse whenever you need it. "
+        "Have a productive day."
+    )
 
     full_script = " ".join(parts)
+    full_script = full_script.replace(".. ", ". ").replace("  ", " ")
 
     loop = asyncio.get_event_loop()
 
