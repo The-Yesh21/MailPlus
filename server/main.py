@@ -739,40 +739,60 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
         if urgent:
             parts.append(
                 f"{'One email needs' if len(urgent) == 1 else str(len(urgent)) + ' emails need'} "
-                f"your immediate attention."
+                f"your immediate attention. Let me walk you through them."
             )
-            for e in urgent[:3]:
-                ai = ai_results.get(e["id"], {})
-                summary = ai.get("summary", "").strip()
+            for i, e in enumerate(urgent[:3]):
+                ai = ai_results.get(e["id"], {}) or {}
+                summary = ai.get("summary", "")
                 sender = e.get("from_name", "Someone")
+                subject = e.get("subject", "")
+                snippet = e.get("snippet", "")
                 deadline = ai.get("deadline")
                 
-                if summary and len(summary) > 15:
-                    parts.append(
-                        f"{sender} reached out — {summary}"
-                    )
+                # Use best available context
+                context = ""
+                if summary and isinstance(summary, str) and len(summary.strip()) > 20:
+                    context = summary.strip()
+                elif snippet and len(snippet.strip()) > 10:
+                    context = snippet.strip()
                 else:
-                    parts.append(
-                        f"You have an urgent message from {sender} "
-                        f"about {e.get('subject', 'an important matter')}."
-                    )
+                    context = f"regarding {subject}" if subject else "with an urgent matter"
+                
+                parts.append(
+                    f"First one" if i == 0 else f"Next one" if i == 1 else f"And",
+                )
+                parts.append(
+                    f"{sender} wrote to you — {context}"
+                )
                 
                 if deadline and deadline not in ["null", "None", None, ""]:
-                    parts.append(f"This one has a deadline — {deadline}.")
+                    parts.append(
+                        f"You need to respond before {deadline}."
+                    )
 
         if reply_needed:
-            names = [e.get("from_name", "someone") for e in reply_needed[:3]]
-            if len(names) == 1:
-                names_str = names[0]
-            elif len(names) == 2:
-                names_str = f"{names[0]} and {names[1]}"
-            else:
-                names_str = f"{names[0]}, {names[1]} and {len(reply_needed) - 2} others"
-            
             parts.append(
-                f"Also, {names_str} "
-                f"{'is' if len(reply_needed) == 1 else 'are'} waiting to hear back from you."
+                f"{len(reply_needed)} {'email needs' if len(reply_needed) == 1 else 'emails need'} "
+                f"a reply from you."
             )
+            for e in reply_needed[:2]:
+                ai = ai_results.get(e["id"], {}) or {}
+                summary = ai.get("summary", "")
+                snippet = e.get("snippet", "")
+                sender = e.get("from_name", "Someone")
+                subject = e.get("subject", "")
+                
+                context = ""
+                if summary and isinstance(summary, str) and len(summary.strip()) > 20:
+                    context = summary.strip()
+                elif snippet and len(snippet.strip()) > 10:
+                    context = snippet.strip()
+                else:
+                    context = f"about {subject}" if subject else "about an important matter"
+                
+                parts.append(
+                    f"{sender} is waiting — {context}"
+                )
 
         if not urgent and not reply_needed and total_unread > 0:
             parts.append(
