@@ -24,6 +24,10 @@ import httpx
 from groq import Groq
 import firebase_admin
 from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
+import numpy as np
+import soundfile as sf
+import io
+from kokoro import KPipeline
 
 load_dotenv()
 
@@ -407,41 +411,56 @@ def analyze_email_hf(from_name, subject, body_preview):
         "draft_reply": data.get("draft_reply", "Draft generation failed.")
     }
 
-import numpy as np
-import soundfile as sf
-import io
-from kokoro import KPipeline
-
 kokoro_pipeline = None
 
 def get_kokoro_pipeline():
     global kokoro_pipeline
     if kokoro_pipeline is None:
-        print("Loading Kokoro TTS pipeline...")
-        kokoro_pipeline = KPipeline(lang_code='a')
-        print("Kokoro TTS ready!")
+        try:
+            print("Initializing Kokoro pipeline...")
+            from kokoro import KPipeline
+            kokoro_pipeline = KPipeline(lang_code='a')
+            print("Kokoro ready!")
+        except Exception as e:
+            print(f"Kokoro init failed: {e}")
+            return None
     return kokoro_pipeline
 
 def generate_voice_briefing(script: str) -> bytes:
     try:
         pipeline = get_kokoro_pipeline()
+        
+        if pipeline is None:
+            print("Kokoro not available")
+            return None
+        
+        print(f"Generating audio for script: {script[:100]}...")
+        
         generator = pipeline(
             script,
             voice='af_bella',
             speed=0.95
         )
+        
         audio_chunks = []
         for i, (gs, ps, audio) in enumerate(generator):
             audio_chunks.append(audio)
+            print(f"Generated chunk {i}")
+        
         if not audio_chunks:
+            print("No audio chunks generated")
             return None
+        
         full_audio = np.concatenate(audio_chunks)
         buffer = io.BytesIO()
         sf.write(buffer, full_audio, 24000, format='WAV')
         buffer.seek(0)
-        return buffer.read()
+        result = buffer.read()
+        print(f"Audio generated: {len(result)} bytes")
+        return result
+        
     except Exception as e:
-        print(f"Kokoro error: {traceback.format_exc()}")
+        print(f"Kokoro generation error: {traceback.format_exc()}")
         return None
 
 
