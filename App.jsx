@@ -337,6 +337,9 @@ const App = () => {
   const [isPlayingVoice, setIsPlayingVoice] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const setEmails = setMails;
+  const setSelectedEmail = setSelectedMailId;
+
   const computeSenders = (emailsList) => {
     const sendersMap = {}
     
@@ -427,8 +430,8 @@ const App = () => {
       try {
         const payload = JSON.parse(atob(savedToken.split('.')[1]));
         setUser({
-          email: payload.email,
           name: payload.name,
+          email: payload.email,
           picture: payload.picture
         });
 
@@ -468,7 +471,7 @@ const App = () => {
       
       if (!response.ok) {
         if (response.status === 401) {
-          handleLogout();
+          handleSignOut();
           return;
         }
         throw new Error(`Server responded with ${response.status}`);
@@ -592,12 +595,15 @@ const App = () => {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('mp_token');
-    setUser(null);
-    setMails([]);
-    window.location.reload();
-  };
+  const handleSignOut = () => {
+    localStorage.removeItem('mp_token')
+    setUser(null)
+    setEmails([])
+    setAiResults({})
+    setSelectedEmail(null)
+    setSenders([])
+    window.location.href = '/'
+  }
 
   const getUrgencyTag = (mail) => {
     if (!mail) return null;
@@ -2155,7 +2161,7 @@ const App = () => {
           </div>
 
           <div style={{ marginTop: 'auto', padding: '12px 8px' }}>
-            <span className="sign-out" style={{ fontSize: '12px' }} onClick={handleLogout}>Sign out</span>
+            <span className="sign-out" style={{ fontSize: '12px' }} onClick={handleSignOut}>Sign out</span>
           </div>
         </aside>
 

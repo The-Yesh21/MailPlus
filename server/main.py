@@ -331,7 +331,7 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             completion = client.chat.completions.create(
-                model="qwen/qwen3-32b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt}
@@ -343,6 +343,11 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
                 stop=None
             )
             content = completion.choices[0].message.content
+            import re
+            if content:
+                content = re.sub(r'<think>.*?</think>', '', 
+                                 content, flags=re.DOTALL)
+                content = content.strip()
             if not isinstance(content, str):
                 return None
             return content.strip() if content else None
@@ -930,12 +935,13 @@ async def callback(code: str, state: str = None, scope: str = None,
             )
             user_info = user_resp.json()
 
-        token = create_jwt({
+        token_data = {
             "access_token": access_token,
             "email": user_info.get("email", ""),
-            "name":  user_info.get("name", ""),
+            "name": user_info.get("name", ""),
             "picture": user_info.get("picture", "")
-        })
+        }
+        token = create_jwt(token_data)
         return RedirectResponse(url=f"{FRONTEND_URL}/?token={token}")
     except Exception as e:
         print(f"Callback error: {e}")
