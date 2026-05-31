@@ -11,3 +11,6 @@ groq==0.9.0
 elevenlabs==1.2.1
 firebase-admin
 aiofiles
+transformers
+torch
+scipy

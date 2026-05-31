@@ -73,85 +73,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── HuggingFace Inference API Zero-Shot Classification ───────────────────────
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+# ── Local Zero-Shot Classification ──────────────────────────────────────────
+from transformers import pipeline as hf_pipeline
 
-async def classify_email(text: str) -> dict:
+zero_shot_classifier = None
+
+def get_classifier():
+    global zero_shot_classifier
+    if zero_shot_classifier is None:
+        print("Loading zero-shot classifier...")
+        zero_shot_classifier = hf_pipeline(
+            "zero-shot-classification",
+            model="cross-encoder/nli-MiniLM2-L6-H768",
+            device=-1
+        )
+        print("Classifier ready!")
+    return zero_shot_classifier
+
+def classify_email(subject: str, body: str, from_email: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                HF_API_URL,
-                headers={"Authorization": f"Bearer {HF_TOKEN}"},
-                json={
-                    "inputs": text[:500],
-                    "parameters": {
-                        "candidate_labels": [
-                            "urgent reply needed",
-                            "deadline mentioned",
-                            "action required",
-                            "important information",
-                            "low priority",
-                            "promotional or newsletter"
-                        ]
-                    }
-                }
-            )
-            data = resp.json()
-            
-            if "error" in data:
-                print(f"HF API error: {data['error']}")
-                return None
-                
-            labels = data.get("labels", [])
-            scores = data.get("scores", [])
-            result = dict(zip(labels, scores))
-            
-            urgent_score = result.get("urgent reply needed", 0)
-            deadline_score = result.get("deadline mentioned", 0)
-            action_score = result.get("action required", 0)
-            promo_score = result.get("promotional or newsletter", 0)
-            
-            if promo_score > 0.6:
-                priority = "low"
-                requires_reply = False
-            elif urgent_score > 0.4 or deadline_score > 0.4:
-                priority = "urgent"
-                requires_reply = True
-            elif action_score > 0.35:
-                priority = "normal"
-                requires_reply = True
-            else:
-                priority = "normal"
-                requires_reply = False
-            
-            deadline = None
-            import re
-            deadline_patterns = [
-                r'by (today|tomorrow|monday|tuesday|wednesday|thursday|friday)',
-                r'due (date|by|on)',
-                r'deadline',
-                r'by \d{1,2}(st|nd|rd|th)',
-                r'before \d{1,2}(am|pm)',
-                r'eod|eow|asap'
+        classifier = get_classifier()
+        text = f"{subject}. {body[:300]}"
+        
+        result = classifier(
+            text,
+            candidate_labels=[
+                "urgent reply needed",
+                "deadline mentioned", 
+                "action required",
+                "low priority",
+                "promotional"
             ]
-            text_lower = text.lower()
-            for pattern in deadline_patterns:
-                match = re.search(pattern, text_lower)
-                if match:
-                    deadline = match.group(0)
-                    break
-            
-            return {
-                "priority": priority,
-                "requires_reply": requires_reply,
-                "deadline": deadline,
-                "reason": f"Classified as {priority} (urgency: {urgent_score:.2f}, action: {action_score:.2f})",
-                "scores": result
-            }
+        )
+        
+        scores = dict(zip(result["labels"], result["scores"]))
+        
+        import re
+        deadline = None
+        deadline_patterns = [
+            r'by (today|tomorrow|monday|tuesday|wednesday|thursday|friday)',
+            r'deadline', r'expires?', r'eod|eow|asap',
+            r'by \d{1,2}[\/\-]\d{1,2}'
+        ]
+        text_lower = f"{subject} {body}".lower()
+        for pattern in deadline_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                deadline = match.group(0)
+                break
+        
+        if scores.get("promotional", 0) > 0.6:
+            priority = "low"
+            requires_reply = False
+        elif scores.get("urgent reply needed", 0) > 0.35 or \
+             scores.get("deadline mentioned", 0) > 0.35:
+            priority = "urgent"
+            requires_reply = True
+        elif scores.get("action required", 0) > 0.35:
+            priority = "normal"
+            requires_reply = True
+        else:
+            priority = "normal"
+            requires_reply = False
+        
+        return {
+            "priority": priority,
+            "requires_reply": requires_reply,
+            "deadline": deadline,
+            "reason": f"Top label: {result['labels'][0]} ({result['scores'][0]:.2f})"
+        }
     except Exception as e:
         print(f"Classification error: {e}")
-        return None
+        return {
+            "priority": "normal",
+            "requires_reply": False,
+            "deadline": None,
+            "reason": "Classification unavailable"
+        }
 
 # ── Firestore helpers ────────────────────────────────────────────────────────
 
@@ -1260,12 +1258,13 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
     subject      = body.get("subject", "")
     body_preview = body.get("body_preview", "")
     email_id     = body.get("email_id", "")
+    from_email   = body.get("from_email", "")
     user_email   = user.get("email", "")
 
     loop = asyncio.get_event_loop()
     try:
         # Step 1: Run classify_email for priority/urgency
-        classification = await classify_email(f"{subject} {body_preview}")
+        classification = classify_email(subject, body_preview, from_email)
         if not classification:
             classification = {
                 "priority": "normal",
@@ -1368,9 +1367,10 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             from_name    = email.get("from_name", "")
             subject      = email.get("subject", "")
             body_preview = email.get("body_preview", "")
+            from_email   = email.get("from_email", "")
 
             # Step 1: Run classify_email for priority/urgency
-            classification = await classify_email(f"{subject} {body_preview}")
+            classification = classify_email(subject, body_preview, from_email)
             if not classification:
                 classification = {
                     "priority": "normal",

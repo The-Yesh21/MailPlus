@@ -2165,240 +2165,169 @@ const App = () => {
           </div>
         </aside>
 
-        {/* ── Dashboard ── */}
-        {activeTab === 'Dashboard' && (
-          <div className="dashboard-container">
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+        {/* ── Dashboard & Daily Digest ── */}
+        {(activeTab === 'Dashboard' || activeTab === 'Daily Digest' || activeTab === 'dashboard' || activeTab === 'daily-digest') && (
+          <div className="dashboard-container" style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+            {/* Header row */}
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div>
-                <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '4px' }}>Executive Summary</h1>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-                  {isFetchingStats ? "AI is analyzing your Gmail history..." : `Your AI assistant has analyzed ${dashboardStats?.total_emails?.toLocaleString() || '0'} emails across your account.`}
-                </p>
-              </div>
-              <div className="badge-strip">
-                <div className="badge-chip amber">🔥 {dashboardStats?.account_age_estimate || "0.0 years"} history</div>
-                <div className="badge-chip">⚡ {dashboardStats?.unread_emails || 0} unread</div>
-                <div className="badge-chip amber">🎯 Response Rate: {dashboardStats?.estimated_response_rate || 0}%</div>
+                <h1 style={{ fontSize: '20px', fontWeight: '600', margin: 0, color: 'var(--text-primary)' }}>Dashboard</h1>
+                <p style={{ fontSize: '13px', color: '#8B949E', margin: '4px 0 0 0' }}>{user?.email || ''}</p>
               </div>
             </header>
 
-            <div className="analytics-grid">
-              {[
-                { label: 'Emails Summarized',  val: (statsData?.emails_analyzed || 0).toLocaleString(),                                                    trend: `${dashboardDynamic?.emails_this_week || 0} this week`,  icon: '✨', class: 'amber' },
-                { label: 'AI Replies Ready',   val: (statsData?.replies_drafted || 0).toLocaleString(),                                                    trend: 'Draft replies ready',                                  icon: '✍️', class: 'teal'  },
-                { label: 'Urgent Caught',      val: (statsData?.urgent_emails_caught || 0).toLocaleString(),                                               trend: 'Priority detection',                                   icon: '⚠️', class: 'red'   },
-                { label: 'Minutes Saved',      val: ((statsData?.emails_analyzed || 0) * 3).toLocaleString(),                                              trend: '3 min saved per email',                                icon: '⏳', class: 'blue'  }
-              ].map((s, i) => (
-                <StatCard key={i} {...s} index={i} className={s.class} />
-              ))}
-            </div>
-
-            <div className="dashboard-row">
-              <div className="panel">
-                <h2 className="panel-title"><span>🕒</span> AI Activity Feed</h2>
-                <div className="activity-list">
-                  {isFetchingStats ? (
-                    [...Array(5)].map((_, i) => (
-                      <div key={i} className="skeleton-row" style={{ padding: '12px', marginBottom: '8px' }}>
-                        <div className="skel-line" style={{ width: '80%' }}></div>
-                      </div>
-                    ))
-                  ) : dashboardStats?.recent_activity_feed?.length > 0 ? (
-                    dashboardStats.recent_activity_feed.map((a, i) => (
-                      <div key={i} className="activity-item">
-                        <div className="activity-icon" style={{
-                          background: a?.priority === 'urgent' ? 'rgba(240,165,0,0.15)' :
-                                      a?.priority === 'low'    ? 'rgba(26,171,138,0.15)' :
-                                      'var(--bg)'
-                        }}>{a?.icon || '✉️'}</div>
-                        <div className="activity-content">
-                          <div className="activity-text">{a?.text || 'Email activity detected'}</div>
-                          <div className="activity-time" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>{a?.time || 'Just now'}</span>
-                            {a?.priority === 'urgent' && <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: '10px' }}>● URGENT</span>}
-                            {a?.priority === 'low'    && <span style={{ color: 'var(--teal)',  fontWeight: 700, fontSize: '10px' }}>● LOW</span>}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="empty-subtitle" style={{ padding: '12px', color: 'var(--text-secondary)' }}>
-                      No AI-analyzed emails yet. Analyze some emails to see activity here.
-                    </div>
-                  )}
+            {/* Stats grid */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              <div style={{ background: '#161B22', border: '1px solid #21262D', borderRadius: '10px', padding: '20px' }}>
+                <div style={{ fontSize: '32px', fontWeight: '600', color: '#F0A500', marginBottom: '4px' }}>
+                  {statsData?.emails_analyzed || 0}
+                </div>
+                <div style={{ fontSize: '12px', color: '#8B949E', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Emails analyzed
                 </div>
               </div>
-
-              <div className="panel">
-                <h2 className="panel-title"><span>💡</span> AI Productivity Insights</h2>
-                <div className="insight-row">
-                  {dashboardStats?.unread_emails > 50 && <div className="insight-card">Your inbox is accumulating unread messages rapidly.</div>}
-                  {((dashboardStats?.promotional_emails || 0) / (dashboardStats?.total_emails || 1)) > 0.4 && <div className="insight-card">Most incoming traffic is promotional noise.</div>}
-                  {(dashboardStats?.morning_emails || 0) > (dashboardStats?.afternoon_emails || 0) && <div className="insight-card">You receive most communication during morning hours.</div>}
-                  {(dashboardStats?.estimated_response_rate || 0) > 20 && <div className="insight-card">You maintain a healthy email response pattern.</div>}
-                  {dashboardStats?.oldest_email_timestamp && (
-                    <div className="insight-card">Deepest visible history: {new Date(dashboardStats.oldest_email_timestamp * 1000).toLocaleDateString()}.</div>
-                  )}
+              <div style={{ background: '#161B22', border: '1px solid #21262D', borderRadius: '10px', padding: '20px' }}>
+                <div style={{ fontSize: '32px', fontWeight: '600', color: '#F0A500', marginBottom: '4px' }}>
+                  {statsData?.urgent_emails_caught || 0}
                 </div>
-
-                <div className="progress-grid">
-                  {[
-                    { label: 'Efficiency', val: Math.min(100, Math.floor((dashboardStats?.total_emails || 0) / 100)) },
-                    { label: 'Inbox Zero', val: Math.max(0, 100 - Math.floor(((dashboardStats?.unread_emails || 0) / (dashboardStats?.total_emails || 1)) * 100)) },
-                    { label: 'Deadlines', val: 100 - (dashboardStats?.estimated_deadline_emails || 0) }
-                  ].map((p, i) => (
-                    <div key={i} className="progress-item">
-                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifySelf: 'center' }}>
-                        <svg className="progress-svg">
-                          <circle className="progress-bg" cx="25" cy="25" r="20" />
-                          <circle className="progress-fill" cx="25" cy="25" r="20" 
-                            style={{ strokeDasharray: 126, strokeDashoffset: 126 - (126 * Math.max(0, Math.min(100, p.val))) / 100 }} 
-                          />
-                        </svg>
-                        <span className="progress-val" style={{ position: 'absolute', width: '100%', textAlign: 'center' }}>{Math.max(0, Math.min(100, p.val))}%</span>
-                      </div>
-                      <span className="progress-label">{p.label}</span>
-                    </div>
-                  ))}
+                <div style={{ fontSize: '12px', color: '#8B949E', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Urgent caught
+                </div>
+              </div>
+              <div style={{ background: '#161B22', border: '1px solid #21262D', borderRadius: '10px', padding: '20px' }}>
+                <div style={{ fontSize: '32px', fontWeight: '600', color: '#F0A500', marginBottom: '4px' }}>
+                  {statsData?.replies_drafted || 0}
+                </div>
+                <div style={{ fontSize: '12px', color: '#8B949E', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Drafts generated
+                </div>
+              </div>
+              <div style={{ background: '#161B22', border: '1px solid #21262D', borderRadius: '10px', padding: '20px' }}>
+                <div style={{ fontSize: '32px', fontWeight: '600', color: '#F0A500', marginBottom: '4px' }}>
+                  {senders?.length || 0}
+                </div>
+                <div style={{ fontSize: '12px', color: '#8B949E', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Unique senders
                 </div>
               </div>
             </div>
-            <div className="panel">
-              <h2 className="panel-title"><span>📅</span> Weekly Communication Activity</h2>
-              <div className="heatmap-container">
-                <div className="heatmap-grid">
-                  <div className="heatmap-day-labels">
-                    {['Sun', '', 'Tue', '', 'Thu', '', 'Sat'].map((d, i) => (
-                      <div key={i} className="heatmap-day-label" style={{ height: '12px', marginBottom: '4px' }}>{d}</div>
-                    ))}
-                  </div>
-                  {[...Array(24)].map((_, i) => {
-                    const dayOffset = (23 - i) * 7;
+
+            {/* Recent AI Analysis */}
+            <div style={{ marginBottom: '24px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '500', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                Recent AI Analysis
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(() => {
+                  const recentAiEmails = (mails || [])
+                    .filter(mail => aiResults && aiResults[mail.id])
+                    .slice(0, 5);
+                  if (recentAiEmails.length === 0) {
                     return (
-                      <div key={i} className="heatmap-col">
-                        {[...Array(7)].map((_, j) => {
-                          const date = new Date();
-                          date.setDate(date.getDate() - (dayOffset + (6 - j)));
-                          const dateStr = date.toISOString().split('T')[0];
-                          const entry = dashboardStats?.activity_heatmap?.find(h => h.date === dateStr);
-                          const level = entry ? Math.min(Math.floor(entry.count / 3) + 1, 4) : 0;
-                          return <div key={j} className="heatmap-cell" data-level={level} title={`${dateStr}: ${entry?.count || 0} emails`}></div>
-                        })}
+                      <div style={{ color: '#8B949E', fontSize: '13px', padding: '12px', background: '#161B22', border: '1px solid #21262D', borderRadius: '8px' }}>
+                        No recent AI-analyzed emails.
                       </div>
                     );
-                  })}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '4px', marginTop: '12px', alignItems: 'center' }}>
-                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Less</span>
-                  {[0,1,2,3,4].map(l => <div key={l} className="heatmap-cell" data-level={l}></div>)/* Heatmap cells */}
-                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>More</span>
-                </div>
+                  }
+                  return recentAiEmails.map(mail => {
+                    const ai = aiResults[mail.id] || {};
+                    const priority = ai.priority || 'normal';
+                    const truncatedSubject = mail.subject && mail.subject.length > 60 
+                      ? mail.subject.slice(0, 60) + '...' 
+                      : mail.subject;
+                    return (
+                      <div
+                        key={mail.id}
+                        onClick={() => {
+                          setSelectedMailId(mail.id);
+                          setActiveTab('All Mail');
+                        }}
+                        style={{
+                          background: '#161B22',
+                          border: '1px solid #21262D',
+                          borderRadius: '8px',
+                          padding: '12px 16px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = '#21262D'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = '#161B22'}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, marginRight: '16px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                            {decodeHtmlEntities(mail.from_name || mail.from_email)}
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#8B949E' }}>
+                            {decodeHtmlEntities(truncatedSubject)}
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{
+                            fontSize: '10px',
+                            fontWeight: '700',
+                            textTransform: 'uppercase',
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            background: priority === 'urgent' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(139, 148, 158, 0.15)',
+                            color: priority === 'urgent' ? '#f87171' : '#8b949e',
+                            border: `1px solid ${priority === 'urgent' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(139, 148, 158, 0.3)'}`
+                          }}>
+                            {priority}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
 
-            <div className="panel">
-              <h2 className="panel-title"><span>🎙️</span> Recent Voice Briefings</h2>
-              <div className="history-table">
-                {dashboardStats?.top_senders ? (
-                  dashboardStats.top_senders.map((s, i) => (
-                    <div key={i} className="history-row" style={{ gridTemplateColumns: '2fr 2.5fr 1fr' }}>
-                      <span style={{ fontWeight: '600' }}>{s.name}</span>
-                      <span style={{ color: 'var(--text-secondary)' }}>{s.email}</span>
-                      <span style={{ textAlign: 'right', fontWeight: '700', color: 'var(--amber)' }}>{s.count} mails</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-subtitle" style={{ padding: '12px' }}>No briefing history available.</div>
-                )}
+            {/* Voice Briefing Section */}
+            <div style={{ marginBottom: '24px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '500', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                Morning Briefing
+              </h3>
+              <div 
+                className="voice-bar" 
+                onClick={() => setShowVoiceModal(true)} 
+                style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#161B22', border: '1px solid #21262D', borderRadius: '10px', padding: '14px 20px', marginBottom: '12px' }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500', color: 'var(--text-primary)' }}>🎙️ Get voice briefing on WhatsApp</span>
+                <span style={{ color: '#F0A500', fontSize: '12px', fontWeight: '600' }}>
+                  Tap to schedule →
+                </span>
               </div>
-            </div>
-
-            {/* ── Briefing Settings Panel ── */}
-            <div className="panel" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px', alignItems: 'start' }}>
-              {/* Tone selector */}
-              <div>
-                <h2 className="panel-title" style={{ marginBottom: '16px' }}><span>🎚️</span> Briefing Tone</h2>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
-                  Choose how your AI morning briefing sounds. Takes effect on the next generation.
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  {[
-                    { key: 'energetic', label: '⚡ Energetic', desc: 'Hyped, punchy, motivating' },
-                    { key: 'humorous',  label: '😄 Humorous',  desc: 'Witty, dry, Grok-style' },
-                    { key: 'calm',      label: '🧘 Calm',      desc: 'Smooth, measured, NPR-style' },
-                    { key: 'formal',    label: '🎩 Formal',    desc: 'Professional, precise, no jokes' },
-                  ].map(t => (
-                    <button
-                      key={t.key}
-                      onClick={() => { setBriefingTone(t.key); localStorage.setItem('mp_tone', t.key); }}
-                      style={{
-                        padding: '12px 14px', borderRadius: '12px', textAlign: 'left',
-                        cursor: 'pointer', border: '1px solid', transition: 'all 0.15s',
-                        borderColor: briefingTone === t.key ? 'var(--amber)' : 'var(--border)',
-                        background: briefingTone === t.key ? 'rgba(255,159,10,0.1)' : 'var(--bg)',
-                        boxShadow: briefingTone === t.key ? '0 0 0 1px rgba(255,159,10,0.3)' : 'none',
-                      }}
-                    >
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: briefingTone === t.key ? 'var(--amber)' : 'var(--text-primary)', marginBottom: '3px' }}>{t.label}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{t.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* WhatsApp number */}
-              <div>
-                <h2 className="panel-title" style={{ marginBottom: '16px' }}><span>📱</span> WhatsApp Delivery</h2>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
-                  Save your number to receive morning briefings directly on WhatsApp. Used for the upcoming auto-delivery feature.
-                </p>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
-                  <input
-                    type="tel"
-                    placeholder="+91 98765 43210"
-                    value={whatsappNumber}
-                    onChange={e => setWhatsappNumber(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && saveWhatsappNumber(whatsappNumber)}
-                    style={{
-                      flex: 1, padding: '10px 14px', borderRadius: '10px', fontSize: '13px',
-                      background: 'var(--bg)', border: '1px solid var(--border)',
-                      color: 'var(--text-primary)', outline: 'none',
-                    }}
-                  />
-                  <button
-                    onClick={() => saveWhatsappNumber(whatsappNumber)}
-                    style={{
-                      padding: '10px 18px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
-                      background: whatsappSaved ? 'rgba(50,173,230,0.15)' : 'rgba(255,159,10,0.15)',
-                      border: `1px solid ${whatsappSaved ? '#32ADE6' : 'var(--amber)'}`,
-                      color: whatsappSaved ? '#32ADE6' : 'var(--amber)',
-                      cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
-                    }}
-                  >{whatsappSaved ? '✓ Saved' : 'Save'}</button>
-                </div>
-                {whatsappNumber && (
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ color: '#25D366' }}>●</span>
-                    Number saved — ready for auto-delivery
-                  </div>
-                )}
-              </div>
+              <button 
+                onClick={() => setShowVoiceModal(true)} 
+                style={{
+                  background: '#F0A500',
+                  color: '#0D1117',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  transition: 'opacity 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+              >
+                Generate Voice Note
+              </button>
             </div>
           </div>
-        )}
-
-        {/* ── Daily Digest ── */}
-        {activeTab === 'Daily Digest' && (
-          <DigestView
-            mails={mails}
-            aiResults={aiResults}
-            analyzingIds={analyzingIds}
-            analyzeEmail={analyzeEmail}
-            markEmailAsRead={markEmailAsRead}
-            DeadlineCountdown={DeadlineCountdown}
-            isDeadlineExpired={isDeadlineExpired}
-            setShowVoiceModal={setShowVoiceModal}
-          />
         )}
 
 
