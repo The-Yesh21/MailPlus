@@ -329,7 +329,7 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             completion = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt}
@@ -342,10 +342,8 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
             )
             content = completion.choices[0].message.content
             import re
-            if content:
-                content = re.sub(r'<think>.*?</think>', '', 
-                                 content, flags=re.DOTALL)
-                content = content.strip()
+            content = re.sub(r'<think>.*?</think>', '', 
+                             content, flags=re.DOTALL).strip()
             if not isinstance(content, str):
                 return None
             return content.strip() if content else None
