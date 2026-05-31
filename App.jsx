@@ -2383,7 +2383,10 @@ const App = () => {
             <div key={activeTab} className="daily-digest-container" style={{
               background: '#0D1117',
               color: '#E6EDF3',
-              minHeight: '100%',
+              height: '100%',
+              flex: 1,
+              overflowY: 'auto',
+              position: 'relative',
               paddingBottom: '80px',
               fontFamily: '"DM Sans", sans-serif'
             }}>

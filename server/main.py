@@ -341,9 +341,13 @@ def call_groq(prompt: str, system: str, max_tokens: int = 300):
                 stop=None
             )
             content = completion.choices[0].message.content
-            import re
-            content = re.sub(r'<think>.*?</think>', '', 
-                             content, flags=re.DOTALL).strip()
+            if content and isinstance(content, str):
+                content = re.sub(
+                    r'<think>.*?</think>', 
+                    '', 
+                    content, 
+                    flags=re.DOTALL
+                ).strip()
             if not isinstance(content, str):
                 return None
             return content.strip() if content else None
