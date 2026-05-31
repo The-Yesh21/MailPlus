@@ -340,6 +340,10 @@ const App = () => {
   const setEmails = setMails;
   const setSelectedEmail = setSelectedMailId;
 
+  const waveHeights = useMemo(() => {
+    return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16) + 4);
+  }, []);
+
   const computeSenders = (emailsList) => {
     const sendersMap = {}
     
@@ -2165,8 +2169,8 @@ const App = () => {
           </div>
         </aside>
 
-        {/* ── Dashboard & Daily Digest ── */}
-        {(activeTab === 'Dashboard' || activeTab === 'Daily Digest' || activeTab === 'dashboard' || activeTab === 'daily-digest') && (
+        {/* ── Dashboard ── */}
+        {(activeTab === 'Dashboard' || activeTab === 'dashboard') && (
           <div className="dashboard-container" style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
             {/* Header row */}
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -2245,6 +2249,7 @@ const App = () => {
                         key={mail.id}
                         onClick={() => {
                           setSelectedMailId(mail.id);
+                          handleEmailSelect(mail);
                           setActiveTab('All Mail');
                         }}
                         style={{
@@ -2329,6 +2334,755 @@ const App = () => {
             </div>
           </div>
         )}
+
+        {/* ── Daily Digest ── */}
+        {(activeTab === 'Daily Digest' || activeTab === 'daily-digest') && (() => {
+          const emails = mails || [];
+          const heroEmail = emails.find(e => 
+            !e.is_read && 
+            aiResults[e.id]?.priority === 'urgent'
+          ) || emails.find(e => !e.is_read) || emails[0];
+
+          const today = new Date().toLocaleDateString('en-US', {
+            weekday: 'long', 
+            day: 'numeric', 
+            month: 'long', 
+            year: 'numeric'
+          }).toUpperCase();
+          const edition = Math.floor(emails.length / 10) + 1;
+
+          const avatarColors = ['#F0A500','#1AAB8A','#7B7BF5','#E05C5C','#3B8BD4','#E8A87C'];
+          const getAvatarColor = (name) => {
+            if (!name) return avatarColors[0];
+            return avatarColors[name.charCodeAt(0) % avatarColors.length];
+          };
+
+          const dispatchEmails = emails
+            .filter(e => !e.is_read)
+            .sort((a,b) => {
+              const pa = aiResults[a.id]?.priority;
+              const pb = aiResults[b.id]?.priority;
+              if (pa === 'urgent' && pb !== 'urgent') return -1;
+              if (pb === 'urgent' && pa !== 'urgent') return 1;
+              return 0;
+            })
+            .slice(0, 6);
+
+          const togglePlayVoice = () => {
+            if (!audioElement) return;
+            if (isPlayingVoice) {
+              audioElement.pause();
+              setIsPlayingVoice(false);
+            } else {
+              audioElement.play();
+              setIsPlayingVoice(true);
+            }
+          };
+
+          return (
+            <div key={activeTab} className="daily-digest-container" style={{
+              background: '#0D1117',
+              color: '#E6EDF3',
+              minHeight: '100%',
+              paddingBottom: '80px',
+              fontFamily: '"DM Sans", sans-serif'
+            }}>
+              {/* Import Google Fonts */}
+              <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+              <style>{`
+                @keyframes waveAnim { 
+                  0%,100%{transform:scaleY(0.4)} 
+                  50%{transform:scaleY(1)} 
+                }
+                @keyframes fadeSlideUp {
+                  from { opacity: 0; transform: translateY(16px); }
+                  to { opacity: 1; transform: translateY(0); }
+                }
+              `}</style>
+
+              {/* Section 1 — Masthead */}
+              <header style={{
+                borderBottom: '1px solid #21262D',
+                padding: '14px 28px',
+                display: 'grid',
+                gridTemplateColumns: '1fr auto 1fr',
+                alignItems: 'center',
+                opacity: 0,
+                animation: 'fadeSlideUp 0.3s ease forwards'
+              }}>
+                {/* Left */}
+                <div>
+                  <div style={{
+                    fontSize: '10px',
+                    letterSpacing: '2.5px',
+                    color: '#484F58',
+                    fontWeight: '700'
+                  }}>
+                    {today} · VOL. {edition}
+                  </div>
+                </div>
+
+                {/* Center */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                    <span style={{ fontFamily: '"DM Sans", sans-serif', fontWeight: '500', color: '#E6EDF3', fontSize: '20px' }}>MailPulse</span>
+                    <span style={{ fontFamily: '"Instrument Serif", serif', fontStyle: 'italic', color: '#F0A500', fontSize: '24px' }}>Daily</span>
+                  </div>
+                  <div style={{ width: '40px', height: '2px', background: '#F0A500', marginTop: '4px' }}></div>
+                </div>
+
+                {/* Right */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end', textAlign: 'right' }}>
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#8B949E' }}>{user?.name || ''}</div>
+                    <div style={{ fontSize: '11px', color: '#484F58' }}>{emails.length} dispatches</div>
+                  </div>
+                  {user?.picture ? (
+                    <img 
+                      src={user.picture} 
+                      alt="" 
+                      style={{ width: '32px', height: '32px', borderRadius: '50%', border: '1.5px solid #30363D' }} 
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      border: '1.5px solid #30363D',
+                      background: getAvatarColor(user?.name),
+                      color: '#0D1117',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {(user?.name || 'U').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+              </header>
+
+              {/* Section 2 — Hero Briefing */}
+              {heroEmail && (() => {
+                const aiData = aiResults[heroEmail.id] || {};
+                const urgentEmail = aiData.priority === 'urgent';
+                return (
+                  <div style={{
+                    margin: '20px 28px',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    opacity: 0,
+                    animation: 'fadeSlideUp 0.4s ease 0.05s forwards'
+                  }}>
+                    <div style={{
+                      background: '#161B22',
+                      borderRadius: '12px',
+                      borderLeft: '3px solid #F0A500',
+                      padding: '24px 28px',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}>
+                      {/* Radial gradient background decoration */}
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: 'radial-gradient(ellipse at top right, rgba(240,165,0,0.04) 0%, transparent 60%)',
+                        pointerEvents: 'none',
+                        zIndex: 1
+                      }} />
+
+                      {/* Top row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', zIndex: 2, position: 'relative' }}>
+                        <span style={{
+                          background: '#2D1B00',
+                          color: '#F0A500',
+                          fontSize: '10px',
+                          fontWeight: '600',
+                          letterSpacing: '1px',
+                          padding: '3px 10px',
+                          borderRadius: '20px'
+                        }}>
+                          {urgentEmail ? "⚡ URGENT BRIEFING" : "📬 TOP BRIEFING"}
+                        </span>
+                        <span style={{ color: '#484F58' }}>·</span>
+                        <span style={{ color: '#484F58', fontSize: '12px' }}>
+                          {new Date(heroEmail.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                        </span>
+                      </div>
+
+                      {/* Headline / Subject */}
+                      <h2 style={{
+                        fontFamily: '"Instrument Serif", serif',
+                        fontSize: '26px',
+                        lineHeight: '1.3',
+                        color: '#E6EDF3',
+                        margin: '12px 0 10px',
+                        maxWidth: '680px',
+                        zIndex: 2,
+                        position: 'relative',
+                        fontWeight: 'normal'
+                      }}>
+                        {decodeHtmlEntities(heroEmail.subject)}
+                      </h2>
+
+                      {/* Summary */}
+                      <p style={{
+                        fontSize: '14px',
+                        color: '#8B949E',
+                        lineHeight: '1.75',
+                        maxWidth: '620px',
+                        margin: '0 0 12px 0',
+                        zIndex: 2,
+                        position: 'relative'
+                      }}>
+                        {aiData.summary || decodeHtmlEntities(heroEmail.snippet)}
+                      </p>
+
+                      {/* Deadline chip */}
+                      {aiData.deadline && (
+                        <div style={{
+                          background: '#2D0D0D',
+                          border: '1px solid #5C1A1A',
+                          color: '#FF6B6B',
+                          borderRadius: '6px',
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          gap: '4px',
+                          alignItems: 'center',
+                          marginTop: '8px',
+                          zIndex: 2,
+                          position: 'relative'
+                        }}>
+                          ⏰ {aiData.deadline}
+                        </div>
+                      )}
+
+                      {/* Bottom action row */}
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: '20px',
+                        zIndex: 2,
+                        position: 'relative'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{
+                            width: '34px',
+                            height: '34px',
+                            borderRadius: '50%',
+                            background: getAvatarColor(heroEmail.from_name || heroEmail.from_email),
+                            color: '#0D1117',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            {(heroEmail.from_name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '13px', fontWeight: '500', color: '#E6EDF3' }}>
+                              {decodeHtmlEntities(heroEmail.from_name || heroEmail.from_email)}
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#8B949E' }}>
+                              {heroEmail.from_email}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          {aiData.draft_reply && (
+                            <button
+                              onClick={() => {
+                                setSelectedEmail(heroEmail.id);
+                                handleEmailSelect(heroEmail);
+                                setActiveTab('All Mail');
+                              }}
+                              style={{
+                                border: '1px solid #1AAB8A',
+                                color: '#1AAB8A',
+                                background: 'transparent',
+                                padding: '8px 18px',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = '#1AAB8A';
+                                e.currentTarget.style.color = 'white';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'transparent';
+                                e.currentTarget.style.color = '#1AAB8A';
+                              }}
+                            >
+                              Draft Ready
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              setSelectedEmail(heroEmail.id);
+                              handleEmailSelect(heroEmail);
+                              setActiveTab('All Mail');
+                            }}
+                            style={{
+                              background: '#F0A500',
+                              color: '#0D1117',
+                              border: 'none',
+                              padding: '8px 18px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              letterSpacing: '0.5px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.filter = 'brightness(1.1)';
+                              e.currentTarget.style.transform = 'scale(1.01)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.filter = 'none';
+                              e.currentTarget.style.transform = 'none';
+                            }}
+                          >
+                            Review Now →
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Section 3 — Intelligence Stats Bar */}
+              <div style={{
+                margin: '0 28px 20px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                background: '#161B22',
+                border: '1px solid #21262D',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                opacity: 0,
+                animation: 'fadeSlideUp 0.4s ease 0.1s forwards'
+              }}>
+                {/* Cell 1: Urgent */}
+                <div 
+                  onClick={() => setActiveTab('Priority Feed')}
+                  style={{
+                    padding: '16px 20px',
+                    borderRight: '1px solid #21262D',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#1C2128'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '28px', fontWeight: '600', color: '#F0A500' }}>
+                    <span style={{ fontSize: '18px' }}>⚡</span>
+                    {emails.filter(e => aiResults[e.id]?.priority === 'urgent').length}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '1.5px', color: '#8B949E', marginTop: '4px' }}>
+                    URGENT
+                  </div>
+                </div>
+
+                {/* Cell 2: Need Reply */}
+                <div 
+                  onClick={() => setActiveTab('Awaiting Reply')}
+                  style={{
+                    padding: '16px 20px',
+                    borderRight: '1px solid #21262D',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#1C2128'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '28px', fontWeight: '600', color: '#E6EDF3' }}>
+                    <span style={{ fontSize: '18px' }}>↩</span>
+                    {emails.filter(e => aiResults[e.id]?.requires_reply).length}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '1.5px', color: '#8B949E', marginTop: '4px' }}>
+                    NEED REPLY
+                  </div>
+                </div>
+
+                {/* Cell 3: Briefings */}
+                <div 
+                  onClick={() => setActiveTab('All Mail')}
+                  style={{
+                    padding: '16px 20px',
+                    borderRight: '1px solid #21262D',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#1C2128'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '28px', fontWeight: '600', color: '#1AAB8A' }}>
+                    <span style={{ fontSize: '18px' }}>📋</span>
+                    {Object.keys(aiResults).length}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '1.5px', color: '#8B949E', marginTop: '4px' }}>
+                    BRIEFINGS
+                  </div>
+                </div>
+
+                {/* Cell 4: FYI */}
+                <div 
+                  onClick={() => setActiveTab('All Mail')}
+                  style={{
+                    padding: '16px 20px',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#1C2128'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '28px', fontWeight: '600', color: '#8B949E' }}>
+                    <span style={{ fontSize: '18px' }}>ℹ</span>
+                    {emails.filter(e => e.is_read).length}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '1.5px', color: '#8B949E', marginTop: '4px' }}>
+                    FYI
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4 — Morning Dispatches */}
+              <div style={{ padding: '0 28px' }}>
+                <header style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '14px',
+                  opacity: 0,
+                  animation: 'fadeSlideUp 0.4s ease 0.15s forwards'
+                }}>
+                  <div style={{
+                    fontSize: '10px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '3px',
+                    color: '#484F58',
+                    fontWeight: '700'
+                  }}>
+                    MORNING DISPATCHES
+                  </div>
+                  <div 
+                    onClick={() => setActiveTab('All Mail')}
+                    style={{
+                      fontSize: '11px',
+                      color: '#F0A500',
+                      fontWeight: '600',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    View all →
+                  </div>
+                </header>
+
+                {/* Two column grid */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+                  gap: '12px',
+                  marginBottom: '20px'
+                }}>
+                  {dispatchEmails.length === 0 ? (
+                    <div style={{
+                      gridColumn: '1 / -1',
+                      background: '#161B22',
+                      border: '1px solid #21262D',
+                      borderRadius: '10px',
+                      padding: '24px',
+                      textAlign: 'center',
+                      color: '#8B949E',
+                      fontSize: '14px'
+                    }}>
+                      All caught up! No unread dispatches available.
+                    </div>
+                  ) : (
+                    dispatchEmails.map((email, idx) => {
+                      const ai = aiResults[email.id] || {};
+                      const priority = ai.priority || 'normal';
+                      const category = email.labels?.includes('CATEGORY_WORK') 
+                        ? 'WORK' 
+                        : email.labels?.includes('CATEGORY_PERSONAL')
+                        ? 'PERSONAL' 
+                        : 'INBOX';
+
+                      const delay = 0.2 + (idx * 0.05);
+
+                      return (
+                        <div
+                          key={email.id}
+                          onClick={() => {
+                            setSelectedEmail(email.id);
+                            handleEmailSelect(email);
+                            setActiveTab('All Mail');
+                          }}
+                          style={{
+                            background: '#161B22',
+                            border: '1px solid #21262D',
+                            borderRadius: '10px',
+                            padding: '16px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            opacity: 0,
+                            animation: `fadeSlideUp 0.4s ease ${delay}s forwards`
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.transform = 'translateY(-3px)';
+                            e.currentTarget.style.borderColor = '#30363D';
+                            e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.borderColor = '#21262D';
+                            e.currentTarget.style.boxShadow = 'none';
+                          }}
+                        >
+                          {/* Card Top row */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{
+                                width: '30px',
+                                height: '30px',
+                                borderRadius: '50%',
+                                background: getAvatarColor(email.from_name || email.from_email),
+                                color: '#0D1117',
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}>
+                                {(email.from_name || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: '#E6EDF3' }}>
+                                {decodeHtmlEntities(email.from_name || email.from_email)}
+                              </span>
+                              <span style={{ fontSize: '10px', color: '#8B949E', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                                {category}
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {/* Priority badge */}
+                              {(() => {
+                                if (priority === 'urgent') {
+                                  return <span style={{ background: '#2D1B00', color: '#F0A500', borderRadius: '4px', padding: '2px 8px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.5px' }}>HIGH</span>;
+                                } else if (ai.requires_reply) {
+                                  return <span style={{ background: '#0D2818', color: '#1AAB8A', borderRadius: '4px', padding: '2px 8px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.5px' }}>DRAFT</span>;
+                                } else {
+                                  return <span style={{ background: '#1C2128', color: '#8B949E', borderRadius: '4px', padding: '2px 8px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.5px' }}>FYI</span>;
+                                }
+                              })()}
+                              <span style={{ fontSize: '11px', color: '#8B949E' }}>
+                                {new Date(email.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Subject */}
+                          <h3 style={{
+                            fontFamily: '"Instrument Serif", serif',
+                            fontSize: '16px',
+                            color: '#E6EDF3',
+                            margin: '10px 0 6px',
+                            lineHeight: '1.3',
+                            fontWeight: 'normal'
+                          }}>
+                            {decodeHtmlEntities(email.subject)}
+                          </h3>
+
+                          {/* Summary / Snippet */}
+                          <p style={{
+                            fontSize: '12px',
+                            color: '#8B949E',
+                            lineHeight: '1.5',
+                            margin: 0,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }}>
+                            {ai.summary || decodeHtmlEntities(email.snippet)}
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Section 5 — Voice Briefing Footer Bar */}
+              <footer style={{
+                position: 'sticky',
+                bottom: 0,
+                background: 'rgba(13,17,23,0.95)',
+                backdropFilter: 'blur(12px)',
+                borderTop: '1px solid #21262D',
+                padding: '12px 28px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px',
+                zIndex: 10,
+                opacity: 0,
+                animation: 'fadeSlideUp 0.4s ease 0.5s forwards'
+              }}>
+                {/* Left group */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {voiceGenerated ? (
+                    <button 
+                      onClick={togglePlayVoice}
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        background: '#F0A500',
+                        color: '#0D1117',
+                        border: 'none',
+                        fontSize: '18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'transform 0.15s, filter 0.15s',
+                        fontWeight: 'bold',
+                        outline: 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'scale(1.05)';
+                        e.currentTarget.style.filter = 'brightness(1.1)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'none';
+                        e.currentTarget.style.filter = 'none';
+                      }}
+                    >
+                      {isPlayingVoice ? '⏸' : '▶'}
+                    </button>
+                  ) : null}
+
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: '500', color: '#E6EDF3' }}>
+                      {voiceGenerated ? "Your morning briefing is ready" : "Get your morning voice briefing"}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#8B949E' }}>
+                      {voiceGenerated ? `${voiceDuration} · AI curated voice dispatch` : "AI compiled daily briefing ready for auto-delivery"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Center waveform */}
+                {voiceGenerated ? (
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '24px', flex: 1, justifySelf: 'center', maxWidth: '160px' }}>
+                    {waveHeights.map((h, i) => (
+                      <div 
+                        key={i} 
+                        style={{ 
+                          flex: 1, 
+                          background: '#F0A500', 
+                          opacity: 0.7,
+                          borderRadius: '2px',
+                          height: `${h}px`,
+                          transformOrigin: 'bottom',
+                          transform: isPlayingVoice ? 'none' : 'scaleY(0.4)',
+                          animation: isPlayingVoice ? `waveAnim 0.8s ease infinite` : 'none',
+                          animationDelay: isPlayingVoice ? `${i * 0.05}s` : 'none',
+                          transition: 'transform 0.2s'
+                        }}
+                      ></div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Right group */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {voiceGenerated ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(`Here is your MailPulse morning briefing:\n\n${voiceScript || 'No script available.'}`)}`;
+                          window.open(whatsappUrl, '_blank');
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid #30363D',
+                          borderRadius: '6px',
+                          padding: '7px 12px',
+                          color: '#8B949E',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        📤 Share
+                      </button>
+                      <button
+                        onClick={() => setShowVoiceModal(true)}
+                        style={{
+                          background: '#1AAB8A',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '8px 20px',
+                          fontSize: '13px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          transition: 'filter 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                        onMouseLeave={(e) => e.currentTarget.style.filter = 'none'}
+                      >
+                        Listen Now
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={generateVoiceBriefing}
+                      disabled={isGeneratingVoice}
+                      style={{
+                        background: '#F0A500',
+                        color: '#0D1117',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '10px 20px',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        cursor: isGeneratingVoice ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'opacity 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                    >
+                      {isGeneratingVoice ? 'Generating...' : '🎙️ Generate Briefing'}
+                    </button>
+                  )}
+                </div>
+              </footer>
+            </div>
+          );
+        })()}
 
 
         {/* ── Mail List + Detail ── */}
