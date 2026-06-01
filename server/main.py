@@ -358,6 +358,21 @@ def save_email_ai_result(user_email: str, email_id: str, result: dict):
         print(f"Firestore AI result write error: {e}")
 
 
+def get_cached_email_ai_result(user_email: str, email_id: str) -> Optional[dict]:
+    """Read a cached AI result from Firestore for a single email if it exists."""
+    try:
+        doc = fs.collection("email_ai")\
+                .document(user_email)\
+                .collection("results")\
+                .document(email_id)\
+                .get()
+        if doc.exists:
+            return doc.to_dict()
+    except Exception as e:
+        print(f"Firestore AI result read error: {e}")
+    return None
+
+
 def get_activity_feed(user_email: str) -> list:
     try:
         doc = fs.collection("user_stats").document(user_email).get()
@@ -1468,6 +1483,13 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 
     loop = asyncio.get_event_loop()
     try:
+        # Step 0: Check Firestore cache first to avoid redundant local and Groq runs
+        cached = await loop.run_in_executor(None, get_cached_email_ai_result, user_email, email_id)
+        if cached:
+            print(f"Bypassing AI analysis for {email_id} - Returning Cached Firestore Result!")
+            cached["email_id"] = email_id
+            return cached
+
         # Step 1: Run classify_email for priority/urgency
         classification = classify_email(subject, body_preview, from_email)
         if not classification:
@@ -1585,6 +1607,13 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             subject      = email.get("subject", "")
             body_preview = email.get("body_preview", "")
             from_email   = email.get("from_email", "")
+
+            # Step 0: Check Firestore cache first to avoid redundant runs
+            cached = await loop.run_in_executor(None, get_cached_email_ai_result, user_email, email_id)
+            if cached:
+                print(f"Bypassing AI batch analysis for {email_id} - Using Cached Result!")
+                results[email_id] = cached
+                continue
 
             # Step 1: Run classify_email for priority/urgency
             classification = classify_email(subject, body_preview, from_email)
