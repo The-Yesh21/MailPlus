@@ -73,10 +73,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Local Zero-Shot Classification ──────────────────────────────────────────
+# ── Local Zero-Shot & Embedding Classification ──────────────────────────────────
 from transformers import pipeline as hf_pipeline
 
 zero_shot_classifier = None
+embedding_pipeline = None
+anchor_embeddings = None
 
 def get_classifier():
     global zero_shot_classifier
@@ -90,7 +92,88 @@ def get_classifier():
         print("Classifier ready!")
     return zero_shot_classifier
 
-def classify_email(subject: str, body: str, from_email: str) -> dict:
+def get_embedding_pipeline():
+    global embedding_pipeline
+    if embedding_pipeline is None:
+        print("Loading Sentence Embedding/Feature Extraction pipeline...")
+        try:
+            embedding_pipeline = hf_pipeline(
+                "feature-extraction",
+                model="sentence-transformers/all-MiniLM-L6-v2",
+                device=-1
+            )
+            print("Embedding pipeline ready!")
+        except Exception as e:
+            print(f"Failed to initialize embedding pipeline: {e}")
+            return None
+    return embedding_pipeline
+
+def get_sentence_embedding(text: str) -> np.ndarray:
+    try:
+        pipeline = get_embedding_pipeline()
+        if pipeline is None:
+            return np.zeros(384)
+        
+        # Mean pooling of token embeddings
+        features = pipeline(text)
+        features_np = np.array(features[0]) # Shape: (seq_len, hidden_size)
+        embedding = np.mean(features_np, axis=0) # Shape: (hidden_size,)
+        
+        # Normalize to unit vector
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+        return embedding
+    except Exception as e:
+        print(f"Embedding calculation error: {e}")
+        return np.zeros(384)
+
+# Semantic anchors representing key categories
+ANCHORS = {
+    "urgent_action": [
+        "Please reply immediately, critical action is required ASAP.",
+        "URGENT attention needed for deadline today.",
+        "Action required, important request from sender.",
+        "Critical system error, deploy failed, production issue.",
+        "Meeting schedule confirmation and calendar invite."
+    ],
+    "career_opportunity": [
+        "Internship application offer, job interview invitation.",
+        "Campus placement drive, resume shortlisting update.",
+        "Hackathon registration, online course certificate."
+    ],
+    "financial": [
+        "Payment receipt, subscription invoice, bank transaction debit.",
+        "Credit card statement, razorpay upi payment due.",
+        "Refund processed successfully, subscription auto-renewal."
+    ],
+    "newsletter_promo": [
+        "Weekly newsletter update, marketing promotional offer discount.",
+        "Unsubscribe from this mailing list, sales coupon deal.",
+        "Community updates, digest, blog post announcement."
+    ]
+}
+
+def get_anchor_embeddings():
+    global anchor_embeddings
+    if anchor_embeddings is None:
+        print("Pre-computing semantic anchor embeddings...")
+        anchor_embeddings = {}
+        for category, sentences in ANCHORS.items():
+            embs = []
+            for s in sentences:
+                emb = get_sentence_embedding(s)
+                embs.append(emb)
+            # Average the anchor embeddings to get a single centroid vector per category
+            centroid = np.mean(embs, axis=0)
+            norm = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid = centroid / norm
+            anchor_embeddings[category] = centroid
+        print("Anchor embeddings ready!")
+    return anchor_embeddings
+
+def classify_email_zeroshot(subject: str, body: str, from_email: str) -> dict:
     try:
         classifier = get_classifier()
         text = f"{subject}. {body[:300]}"
@@ -150,6 +233,68 @@ def classify_email(subject: str, body: str, from_email: str) -> dict:
             "deadline": None,
             "reason": "Classification unavailable"
         }
+
+def classify_email(subject: str, body: str, from_email: str) -> dict:
+    try:
+        # Load local embedding centroids
+        anchors = get_anchor_embeddings()
+        email_text = f"{subject}. {body[:300]}"
+        email_emb = get_sentence_embedding(email_text)
+        
+        # Calculate similarities
+        sims = {}
+        for cat, centroid in anchors.items():
+            sims[cat] = float(np.dot(email_emb, centroid))
+            
+        print(f"Semantic similarities for '{subject}': {sims}")
+        
+        # Deterministic deadline patterns
+        import re
+        deadline = None
+        deadline_patterns = [
+            r'by (today|tomorrow|monday|tuesday|wednesday|thursday|friday)',
+            r'deadline', r'expires?', r'eod|eow|asap',
+            r'by \d{1,2}[\/\-]\d{1,2}'
+        ]
+        text_lower = f"{subject} {body}".lower()
+        for pattern in deadline_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                deadline = match.group(0)
+                break
+                
+        # Classify based on semantic similarities
+        priority = "normal"
+        requires_reply = False
+        reason = "Classified by local sentence embedding"
+        
+        # A threshold-based decision tree
+        if sims.get("newsletter_promo", 0) > 0.45:
+            priority = "low"
+            requires_reply = False
+            reason = f"Newsletter/Promo detected (sim: {sims['newsletter_promo']:.2f})"
+        elif sims.get("urgent_action", 0) > 0.40 or deadline is not None:
+            priority = "urgent"
+            requires_reply = True
+            reason = f"Urgent/Action item detected (sim: {sims['urgent_action']:.2f})"
+        elif sims.get("career_opportunity", 0) > 0.42:
+            priority = "normal"
+            requires_reply = True
+            reason = f"Career/Placement update (sim: {sims['career_opportunity']:.2f})"
+        elif sims.get("financial", 0) > 0.42:
+            priority = "normal"
+            requires_reply = False
+            reason = f"Financial transaction/billing (sim: {sims['financial']:.2f})"
+            
+        return {
+            "priority": priority,
+            "requires_reply": requires_reply,
+            "deadline": deadline,
+            "reason": reason
+        }
+    except Exception as e:
+        print(f"Semantic classification error: {e}. Falling back to zero-shot classification.")
+        return classify_email_zeroshot(subject, body, from_email)
 
 # ── Firestore helpers ────────────────────────────────────────────────────────
 
@@ -431,7 +576,7 @@ def get_kokoro_pipeline():
             return None
     return kokoro_pipeline
 
-def generate_voice_briefing(script: str) -> bytes:
+def generate_voice_briefing(script: str, tone: str = "energetic") -> bytes:
     try:
         pipeline = get_kokoro_pipeline()
         
@@ -439,12 +584,29 @@ def generate_voice_briefing(script: str) -> bytes:
             print("Kokoro not available")
             return None
         
-        print(f"Generating audio for script: {script[:100]}...")
+        print(f"Generating audio for script: {script[:100]}... with tone: {tone}")
         
+        # Adjust Kokoro voice & speed dynamically based on tone
+        if tone == "morning_routine":
+            voice = 'af_nicole'  # Soothing, warm female voice for morning routine
+            speed = 0.92         # Slightly slower for a calm, grounding feel
+        elif tone == "calm":
+            voice = 'af_sky'     # Very gentle, soft female voice
+            speed = 0.90         # Slower pace
+        elif tone == "humorous":
+            voice = 'am_adam'    # Male voice with some grit/character
+            speed = 1.0          # Normal speed
+        elif tone == "energetic":
+            voice = 'af_bella'   # Bright, upbeat female voice
+            speed = 1.05         # Slightly faster, punchy
+        else:
+            voice = 'af_bella'
+            speed = 0.95
+            
         generator = pipeline(
             script,
-            voice='af_bella',
-            speed=0.95
+            voice=voice,
+            speed=speed
         )
         
         audio_chunks = []
@@ -583,6 +745,15 @@ def build_briefing_prompt(name: str, total: int, urgent_emails: list,
     """
 
     tone_instructions = {
+        "morning_routine": (
+            "You are a warm, highly encouraging, and psychologically empowering morning performance coach and chief-of-staff. "
+            "Greet Yeshwanth with genuine warmth, acknowledging the start of a fresh day. "
+            "Your goal is to optimize his morning mindset: reduce anxiety, boost cognitive clarity, and gently guide him into his ideal morning flow. "
+            "Frame the inbox situation positively (e.g., 'We have a couple of key items to navigate today, but nothing we can't handle smoothly. Let's tackle them one by one.'). "
+            "Present urgent items as simple, achievable triggers. "
+            "Structure the briefing as a relaxed, inspiring morning conversation. Use smooth transitions and inspiring words. "
+            "End with an uplifting, psychologically grounding sign-off that primes him for focus and peace."
+        ),
         "energetic": (
             "You are HYPED. Short punchy sentences. Lots of energy. Use exclamations naturally. "
             "Make the user feel like they're about to crush the day. Think sports coach meets tech bro."
@@ -731,107 +902,138 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     reply_needed = [e for e in unread_emails if ai_results.get(e["id"], {}).get("requires_reply") and ai_results.get(e["id"], {}).get("priority") != "urgent"]
     total_unread = len(unread_emails)
 
-    parts = []
+    full_script = None
 
-    # Warm personal opener based on time
-    from datetime import datetime
-    hour = datetime.now().hour
-    if hour < 12:
-        greeting = "Good morning"
-    elif hour < 17:
-        greeting = "Good afternoon"
-    else:
-        greeting = "Good evening"
-
-    parts.append(
-        f"{greeting}, {name}. "
-        f"Here's what's waiting for you in your inbox."
-    )
-
-    if total_unread == 0:
-        parts.append(
-            "Great news — you're completely caught up. "
-            "Your inbox is clean and there's nothing urgent pending. "
-            "Enjoy your day!"
+    # Try generating script via Groq AI
+    try:
+        categories = categorize_emails(unread_emails, ai_results)
+        briefing_prompt = build_briefing_prompt(
+            name=name,
+            total=total_unread,
+            urgent_emails=urgent,
+            reply_emails=reply_needed,
+            top_emails=unread_emails,
+            categories=categories,
+            tone=tone
         )
-    else:
+        
+        print(f"Generating AI briefing script via Groq with tone '{tone}'...")
+        ai_script = call_groq(
+            briefing_prompt,
+            "You are a helpful, warm AI chief-of-staff delivering a spoken morning briefing. Do NOT output markdown, bullet points, asterisks, dashes or lists. Respond ONLY with clean spoken text.",
+            550
+        )
+        if ai_script and len(ai_script.strip()) > 50:
+            full_script = ai_script.strip()
+            # Strip out any remaining markdown formatting
+            full_script = re.sub(r'[*_\-#`\[\]()]', '', full_script)
+            print("Successfully generated briefing script via Groq!")
+    except Exception as e:
+        print(f"Error generating AI briefing script via Groq: {e}. Falling back to manual script.")
+
+    # Fallback to manual script generation if Groq fails or is not configured
+    if not full_script:
+        parts = []
+
+        # Warm personal opener based on time
+        from datetime import datetime
+        hour = datetime.now().hour
+        if hour < 12:
+            greeting = "Good morning"
+        elif hour < 17:
+            greeting = "Good afternoon"
+        else:
+            greeting = "Good evening"
+
         parts.append(
-            f"You have {total_unread} unread "
-            f"{'email' if total_unread == 1 else 'emails'} today."
+            f"{greeting}, {name}. "
+            f"Here's what's waiting for you in your inbox."
         )
 
-        if urgent:
+        if total_unread == 0:
             parts.append(
-                f"{'One email needs' if len(urgent) == 1 else str(len(urgent)) + ' emails need'} "
-                f"your immediate attention. Let me walk you through them."
+                "Great news — you're completely caught up. "
+                "Your inbox is clean and there's nothing urgent pending. "
+                "Enjoy your day!"
             )
-            for i, e in enumerate(urgent[:3]):
-                ai = ai_results.get(e["id"], {}) or {}
-                summary = ai.get("summary", "")
-                sender = e.get("from_name", "Someone")
-                subject = e.get("subject", "")
-                snippet = e.get("snippet", "")
-                deadline = ai.get("deadline")
-                
-                # Use best available context
-                context = ""
-                if summary and isinstance(summary, str) and len(summary.strip()) > 20:
-                    context = summary.strip()
-                elif snippet and len(snippet.strip()) > 10:
-                    context = snippet.strip()
-                else:
-                    context = f"regarding {subject}" if subject else "with an urgent matter"
-                
+        else:
+            parts.append(
+                f"You have {total_unread} unread "
+                f"{'email' if total_unread == 1 else 'emails'} today."
+            )
+
+            if urgent:
                 parts.append(
-                    f"First one" if i == 0 else f"Next one" if i == 1 else f"And",
+                    f"{'One email needs' if len(urgent) == 1 else str(len(urgent)) + ' emails need'} "
+                    f"your immediate attention. Let me walk you through them."
                 )
-                parts.append(
-                    f"{sender} wrote to you — {context}"
-                )
-                
-                if deadline and deadline not in ["null", "None", None, ""]:
+                for i, e in enumerate(urgent[:3]):
+                    ai = ai_results.get(e["id"], {}) or {}
+                    summary = ai.get("summary", "")
+                    sender = e.get("from_name", "Someone")
+                    subject = e.get("subject", "")
+                    snippet = e.get("snippet", "")
+                    deadline = ai.get("deadline")
+                    
+                    # Use best available context
+                    context = ""
+                    if summary and isinstance(summary, str) and len(summary.strip()) > 20:
+                        context = summary.strip()
+                    elif snippet and len(snippet.strip()) > 10:
+                        context = snippet.strip()
+                    else:
+                        context = f"regarding {subject}" if subject else "with an urgent matter"
+                    
                     parts.append(
-                        f"You need to respond before {deadline}."
+                        f"First one" if i == 0 else f"Next one" if i == 1 else f"And",
+                    )
+                    parts.append(
+                        f"{sender} wrote to you — {context}"
+                    )
+                    
+                    if deadline and deadline not in ["null", "None", None, ""]:
+                        parts.append(
+                            f"You need to respond before {deadline}."
+                        )
+
+            if reply_needed:
+                parts.append(
+                    f"{len(reply_needed)} {'email needs' if len(reply_needed) == 1 else 'emails need'} "
+                    f"a reply from you."
+                )
+                for e in reply_needed[:2]:
+                    ai = ai_results.get(e["id"], {}) or {}
+                    summary = ai.get("summary", "")
+                    snippet = e.get("snippet", "")
+                    sender = e.get("from_name", "Someone")
+                    subject = e.get("subject", "")
+                    
+                    context = ""
+                    if summary and isinstance(summary, str) and len(summary.strip()) > 20:
+                        context = summary.strip()
+                    elif snippet and len(snippet.strip()) > 10:
+                        context = snippet.strip()
+                    else:
+                        context = f"about {subject}" if subject else "about an important matter"
+                    
+                    parts.append(
+                        f"{sender} is waiting — {context}"
                     )
 
-        if reply_needed:
-            parts.append(
-                f"{len(reply_needed)} {'email needs' if len(reply_needed) == 1 else 'emails need'} "
-                f"a reply from you."
-            )
-            for e in reply_needed[:2]:
-                ai = ai_results.get(e["id"], {}) or {}
-                summary = ai.get("summary", "")
-                snippet = e.get("snippet", "")
-                sender = e.get("from_name", "Someone")
-                subject = e.get("subject", "")
-                
-                context = ""
-                if summary and isinstance(summary, str) and len(summary.strip()) > 20:
-                    context = summary.strip()
-                elif snippet and len(snippet.strip()) > 10:
-                    context = snippet.strip()
-                else:
-                    context = f"about {subject}" if subject else "about an important matter"
-                
+            if not urgent and not reply_needed and total_unread > 0:
                 parts.append(
-                    f"{sender} is waiting — {context}"
+                    "None of them are urgent — "
+                    "take your time going through them when you're ready."
                 )
 
-        if not urgent and not reply_needed and total_unread > 0:
-            parts.append(
-                "None of them are urgent — "
-                "take your time going through them when you're ready."
-            )
+        parts.append(
+            f"That's your briefing for now, {name}. "
+            "Your full inbox is ready in MailPulse whenever you need it. "
+            "Have a productive day."
+        )
 
-    parts.append(
-        f"That's your briefing for now, {name}. "
-        "Your full inbox is ready in MailPulse whenever you need it. "
-        "Have a productive day."
-    )
-
-    full_script = " ".join(parts)
-    full_script = full_script.replace(".. ", ". ").replace("  ", " ")
+        full_script = " ".join(parts)
+        full_script = full_script.replace(".. ", ". ").replace("  ", " ")
 
     loop = asyncio.get_event_loop()
 
@@ -839,7 +1041,8 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     filename = f"{uuid.uuid4().hex}.wav"
     filepath = os.path.join("audio", filename)
 
-    audio_data = await loop.run_in_executor(None, generate_voice_briefing, full_script)
+    # Use partial to pass the tone to generate_voice_briefing
+    audio_data = await loop.run_in_executor(None, partial(generate_voice_briefing, full_script, tone))
 
     if not audio_data:
         raise HTTPException(status_code=500, detail="Voice generation failed")
@@ -1275,8 +1478,14 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
                 "reason": "Could not classify"
             }
 
-        # Step 2: Use Groq ONLY for summary and draft_reply
-        combined_prompt = f"""For this email write:
+        # Step 2: Optimize Groq calls - only call Groq for urgent or reply-required emails
+        needs_groq = classification["priority"] == "urgent" or classification["requires_reply"]
+        
+        summary = ""
+        draft = ""
+        
+        if needs_groq:
+            combined_prompt = f"""For this email write:
 1. SUMMARY: 2 sentences about what it is and what action is needed
 2. DRAFT: 3 sentence professional reply signed as Yeshwanth
 
@@ -1288,23 +1497,29 @@ Reply in this exact format:
 SUMMARY: <2 sentences>
 DRAFT: <3 sentences>"""
 
-        raw = await loop.run_in_executor(
-            None,
-            partial(call_groq, combined_prompt,
-            "You are an email assistant. Follow the format exactly.",
-            300)
-        )
+            raw = await loop.run_in_executor(
+                None,
+                partial(call_groq, combined_prompt,
+                "You are an email assistant. Follow the format exactly.",
+                300)
+            )
 
-        summary = ""
-        draft = ""
-        if raw:
-            if "SUMMARY:" in raw and "DRAFT:" in raw:
-                parts = raw.split("DRAFT:")
-                summary = parts[0].replace("SUMMARY:", "").strip()
-                draft = parts[1].strip()
+            if raw:
+                if "SUMMARY:" in raw and "DRAFT:" in raw:
+                    parts = raw.split("DRAFT:")
+                    summary = parts[0].replace("SUMMARY:", "").strip()
+                    draft = parts[1].strip()
+                else:
+                    summary = raw[:200]
+                    draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
+        else:
+            # Local high-speed summarization to avoid API calls
+            if classification["priority"] == "low":
+                summary = f"Low priority update/newsletter from {from_name} regarding {subject}."
+                draft = ""
             else:
-                summary = raw[:200]
-                draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
+                summary = f"FYI email from {from_name} about {subject}."
+                draft = ""
 
         is_urgent       = classification["priority"] == "urgent"
         has_valid_draft = bool(draft)
@@ -1381,8 +1596,14 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
                     "reason": "Could not classify"
                 }
 
-            # Step 2: Use Groq ONLY for summary and draft_reply
-            combined_prompt = f"""For this email write:
+            # Step 2: Optimize Groq calls - only call Groq for urgent or reply-required emails
+            needs_groq = classification["priority"] == "urgent" or classification["requires_reply"]
+            
+            summary = ""
+            draft = ""
+            
+            if needs_groq:
+                combined_prompt = f"""For this email write:
 1. SUMMARY: 2 sentences about what it is and what action is needed
 2. DRAFT: 3 sentence professional reply signed as Yeshwanth
 
@@ -1394,23 +1615,29 @@ Reply in this exact format:
 SUMMARY: <2 sentences>
 DRAFT: <3 sentences>"""
 
-            raw = await loop.run_in_executor(
-                None,
-                partial(call_groq, combined_prompt,
-                "You are an email assistant. Follow the format exactly.",
-                300)
-            )
+                raw = await loop.run_in_executor(
+                    None,
+                    partial(call_groq, combined_prompt,
+                    "You are an email assistant. Follow the format exactly.",
+                    300)
+                )
 
-            summary = ""
-            draft = ""
-            if raw:
-                if "SUMMARY:" in raw and "DRAFT:" in raw:
-                    parts = raw.split("DRAFT:")
-                    summary = parts[0].replace("SUMMARY:", "").strip()
-                    draft = parts[1].strip()
+                if raw:
+                    if "SUMMARY:" in raw and "DRAFT:" in raw:
+                        parts = raw.split("DRAFT:")
+                        summary = parts[0].replace("SUMMARY:", "").strip()
+                        draft = parts[1].strip()
+                    else:
+                        summary = raw[:200]
+                        draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
+            else:
+                # Local high-speed summarization to avoid API calls
+                if classification["priority"] == "low":
+                    summary = f"Low priority update/newsletter from {from_name} regarding {subject}."
+                    draft = ""
                 else:
-                    summary = raw[:200]
-                    draft = f"Hi {from_name},\n\nThank you for your email. I will get back to you shortly.\n\nBest,\nYeshwanth"
+                    summary = f"FYI email from {from_name} about {subject}."
+                    draft = ""
 
             is_urgent       = classification["priority"] == "urgent"
             has_valid_draft = bool(draft)

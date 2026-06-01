@@ -3618,6 +3618,48 @@ const App = () => {
 
               <div style={{ height: '1px', background: '#30363D', margin: '20px 0' }}></div>
 
+              {/* Section: Briefing Tone */}
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: '#F0A500', letterSpacing: '1px', fontWeight: 'bold' }}>Briefing Tone</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px', marginBottom: '20px' }}>
+                {[
+                  { value: 'morning_routine', label: '🧘 Mindful Morning', color: '#88D49E' },
+                  { value: 'energetic', label: '⚡ Energetic Boost', color: '#FFD166' },
+                  { value: 'calm', label: '🌊 Calm & Peaceful', color: '#4EA8DE' },
+                  { value: 'humorous', label: '🎭 Witty & Sarcastic', color: '#F28482' },
+                  { value: 'formal', label: '👔 Executive Assistant', color: '#90E0EF' }
+                ].map(t => {
+                  const isActive = briefingTone === t.value;
+                  return (
+                    <div 
+                      key={t.value}
+                      onClick={() => {
+                        setBriefingTone(t.value);
+                        localStorage.setItem('mp_tone', t.value);
+                      }}
+                      style={{ 
+                        background: isActive ? '#21262D' : '#161B22', 
+                        border: isActive ? `2px solid ${t.color}` : '1px solid #30363D',
+                        borderRadius: '10px', 
+                        padding: '10px', 
+                        fontSize: '12px', 
+                        cursor: 'pointer',
+                        color: isActive ? '#E6EDF3' : '#8B949E', 
+                        fontWeight: isActive ? '600' : 'normal',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      {t.label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ height: '1px', background: '#30363D', margin: '20px 0' }}></div>
+
               {/* Section 2 */}
               <div style={{ fontSize: '12px', textTransform: 'uppercase', color: '#F0A500', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '12px' }}>Voice note preview</div>
               
