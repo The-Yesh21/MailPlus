@@ -415,7 +415,7 @@ const App = () => {
 
   const audioRef = useRef(null);
 
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = "https://yeshwanth9750-mailpulse-backend.hf.space";
 
   // Auth & Token Management
   useEffect(() => {
