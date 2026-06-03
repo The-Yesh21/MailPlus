@@ -916,6 +916,7 @@ const App = () => {
         },
         body: JSON.stringify({
           emails: mails.slice(0, 10),
+          tone: briefingTone,
           ai_results: typeof aiResults === 'object' && !Array.isArray(aiResults) 
             ? aiResults 
             : {}

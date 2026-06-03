@@ -862,8 +862,9 @@ STRICT OUTPUT RULES:
   3. Career/Learning highlights (if any) — internships, interviews, courses.
   4. Financial alerts (if any) — payments due, subscriptions, bank alerts.
   5. Action items — specific decisions or tasks, not vague summaries. Be direct: "Reply to X about Y", "Approve Z".
-  6. Conversation continuity — if someone replied to an ongoing thread, say what they said, not just that they replied.
-  7. Sign-off line matching the tone.
+  6. Top emails / general updates (if no urgent or action items today) — summarize what the key emails are about.
+  7. Conversation continuity — if someone replied to an ongoing thread, say what they said, not just that they replied.
+  8. Sign-off line matching the tone.
 
 INBOX DATA:
 Total emails: {total}
@@ -892,11 +893,65 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     emails = body.get("emails", [])
     user_email = user.get("email", "")
     tone = body.get("tone", "energetic")
+    body_ai_results = body.get("ai_results", {})
+
+    # Fetch fresh emails from Gmail to avoid stale stats/cache
+    access_token = user.get("access_token")
+    if access_token:
+        try:
+            print("Fetching fresh emails from Gmail for voice briefing...")
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"labelIds": ["INBOX"], "q": "newer_than:14d", "maxResults": 40}
+                )
+                if resp.status_code == 200:
+                    messages = resp.json().get("messages", [])
+                    
+                    async def fetch_detail(msg_id):
+                        try:
+                            r = await client.get(
+                                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}",
+                                headers={"Authorization": f"Bearer {access_token}"},
+                                params={"format": "full"}
+                            )
+                            return r.json()
+                        except:
+                            return None
+
+                    details = await asyncio.gather(*[fetch_detail(m["id"]) for m in messages])
+                    fresh_emails = []
+                    for m in details:
+                        if not m or "id" not in m:
+                            continue
+                        hdrs = m["payload"].get("headers", [])
+                        subject     = next((h["value"] for h in hdrs if h["name"] == "Subject"), "No Subject")
+                        from_header = next((h["value"] for h in hdrs if h["name"] == "From"),    "Unknown")
+                        date_header = next((h["value"] for h in hdrs if h["name"] == "Date"),    "")
+                        from_name, from_email = parse_from(from_header)
+                        fresh_emails.append({
+                            "id":            m["id"],
+                            "threadId":      m["threadId"],
+                            "subject":       subject,
+                            "from_name":     from_name,
+                            "from_email":    from_email,
+                            "snippet":       m.get("snippet", ""),
+                            "date":          date_header,
+                            "internal_date": int(m.get("internalDate", 0)),
+                            "body_preview":  parse_email_body(m["payload"], limit=300),
+                            "labels":        m.get("labelIds", []),
+                            "is_read":       "UNREAD" not in m.get("labelIds", [])
+                        })
+                    if fresh_emails:
+                        emails = fresh_emails
+        except Exception as e:
+            print(f"Error fetching fresh emails from Gmail: {e}")
 
     if not emails:
-        raise HTTPException(status_code=400, detail="No emails provided")
+        raise HTTPException(status_code=400, detail="No emails provided or found in Gmail inbox")
 
-    # Fetch AI results from Firestore, merge with inline ai field from frontend
+    # Fetch AI results from Firestore, merge with inline ai field from frontend and body
     ai_results = {}
     try:
         results_ref = fs.collection("email_ai").document(user_email).collection("results")
@@ -906,13 +961,56 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     except Exception as e:
         print(f"Error fetching AI results for briefing: {e}")
 
+    # Merge body ai_results
+    if isinstance(body_ai_results, dict):
+        for msg_id, ai_data in body_ai_results.items():
+            if ai_data and isinstance(ai_data, dict):
+                ai_results.setdefault(msg_id, ai_data)
+
+    # Merge inline email ai fields if any
     for e in emails:
         if e.get("ai") and e.get("id"):
             ai_results.setdefault(e["id"], e["ai"])
 
     name = user.get("name", "").split()[0]
-
     unread_emails = [e for e in emails if not e.get("is_read", True)]
+
+    # For any unread email that doesn't have a real AI summary yet, analyze it on the fly with Groq!
+    analysis_tasks = []
+    emails_to_analyze = []
+    for e in unread_emails:
+        eid = e.get("id")
+        if not eid:
+            continue
+        has_real_summary = (
+            ai_results.get(eid, {}).get("summary") and 
+            not ai_results[eid]["summary"].startswith("FYI email from") and 
+            not ai_results[eid]["summary"].startswith("Low priority update") and
+            not ai_results[eid]["summary"].startswith("Email from")
+        )
+        if not has_real_summary:
+            emails_to_analyze.append(e)
+            analysis_tasks.append(
+                analyze_single_email_helper(
+                    email_id=eid,
+                    from_name=e.get("from_name", ""),
+                    subject=e.get("subject", ""),
+                    body_preview=e.get("body_preview", "") or e.get("snippet", ""),
+                    from_email=e.get("from_email", ""),
+                    user_email=user_email,
+                    force_groq=True # Force Groq analysis to get a high quality LLM summary!
+                )
+            )
+
+    if analysis_tasks:
+        print(f"Running on-the-fly Groq analysis for {len(analysis_tasks)} unread emails for voice briefing...")
+        analyzed_results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
+        for e, res in zip(emails_to_analyze, analyzed_results):
+            if isinstance(res, dict) and "summary" in res:
+                ai_results[e["id"]] = res
+            else:
+                print(f"Error analyzing email {e.get('id')} on the fly: {res}")
+
     urgent = [e for e in unread_emails if ai_results.get(e["id"], {}).get("priority") == "urgent"]
     reply_needed = [e for e in unread_emails if ai_results.get(e["id"], {}).get("requires_reply") and ai_results.get(e["id"], {}).get("priority") != "urgent"]
     total_unread = len(unread_emails)
@@ -1471,24 +1569,22 @@ async def get_all_cached_results(user=Depends(get_current_user)):
         print(f"Error fetching cache: {e}")
     return {"cached": ai_results}
 
-@app.post("/ai/analyze")
-async def analyze_email(request: Request, user=Depends(get_current_user)):
-    body         = await request.json()
-    from_name    = body.get("from_name", "")
-    subject      = body.get("subject", "")
-    body_preview = body.get("body_preview", "")
-    email_id     = body.get("email_id", "")
-    from_email   = body.get("from_email", "")
-    user_email   = user.get("email", "")
-
+async def analyze_single_email_helper(email_id: str, from_name: str, subject: str, body_preview: str, from_email: str, user_email: str, force_groq: bool = False) -> dict:
     loop = asyncio.get_event_loop()
     try:
         # Step 0: Check Firestore cache first to avoid redundant local and Groq runs
         cached = await loop.run_in_executor(None, get_cached_email_ai_result, user_email, email_id)
         if cached:
-            print(f"Bypassing AI analysis for {email_id} - Returning Cached Firestore Result!")
-            cached["email_id"] = email_id
-            return cached
+            has_real_summary = (
+                cached.get("summary") and 
+                not cached.get("summary", "").startswith("FYI email from") and 
+                not cached.get("summary", "").startswith("Low priority update") and
+                not cached.get("summary", "").startswith("Email from")
+            )
+            if not force_groq or has_real_summary:
+                print(f"Bypassing AI analysis for {email_id} - Returning Cached Firestore Result!")
+                cached["email_id"] = email_id
+                return cached
 
         # Step 1: Run classify_email for priority/urgency
         classification = classify_email(subject, body_preview, from_email)
@@ -1500,8 +1596,8 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
                 "reason": "Could not classify"
             }
 
-        # Step 2: Optimize Groq calls - only call Groq for urgent or reply-required emails
-        needs_groq = classification["priority"] == "urgent" or classification["requires_reply"]
+        # Step 2: Optimize Groq calls - only call Groq for urgent or reply-required emails, unless force_groq is True
+        needs_groq = force_groq or classification["priority"] == "urgent" or classification["requires_reply"]
         
         summary = ""
         draft = ""
@@ -1585,6 +1681,26 @@ DRAFT: <3 sentences>"""
             "requires_reply": False, "summary": f"Email from {from_name} about {subject}.",
             "draft_reply": f"Hi {from_name},\n\nThank you for your email. I'll get back to you soon.\n\nBest, Yeshwanth"
         }
+
+
+@app.post("/ai/analyze")
+async def analyze_email(request: Request, user=Depends(get_current_user)):
+    body         = await request.json()
+    from_name    = body.get("from_name", "")
+    subject      = body.get("subject", "")
+    body_preview = body.get("body_preview", "")
+    email_id     = body.get("email_id", "")
+    from_email   = body.get("from_email", "")
+    user_email   = user.get("email", "")
+
+    return await analyze_single_email_helper(
+        email_id=email_id,
+        from_name=from_name,
+        subject=subject,
+        body_preview=body_preview,
+        from_email=from_email,
+        user_email=user_email
+    )
 
 
 @app.post("/ai/analyze-batch")

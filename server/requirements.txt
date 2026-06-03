@@ -14,3 +14,6 @@ aiofiles
 transformers
 torch
 scipy
+numpy
+soundfile
+kokoro
