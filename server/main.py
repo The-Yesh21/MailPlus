@@ -435,8 +435,18 @@ def parse_email_body(payload, limit=None):
             except: pass
 
     body = body_html if body_html else body_text
-    clean = re.sub(r"<[^>]+>", "", body)
+    
+    # Strip style and script tag contents entirely if we had HTML
+    clean = body
+    if body_html:
+        clean = re.sub(r'<style[^>]*>([\s\S]*?)</style>', '', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'<script[^>]*>([\s\S]*?)</script>', '', clean, flags=re.IGNORECASE)
+
+    clean = re.sub(r"<[^>]+>", "", clean)
     clean = html.unescape(clean).strip()
+    # Replace multiple whitespaces and newlines with a single space for a clean text preview
+    clean = re.sub(r'\s+', ' ', clean)
+    
     if limit:
         return clean[:limit]
     return body if body_html else clean
