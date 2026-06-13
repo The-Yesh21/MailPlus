@@ -436,16 +436,15 @@ def parse_email_body(payload, limit=None):
 
     body = body_html if body_html else body_text
     
-    # Strip style and script tag contents entirely if we had HTML
-    clean = body
-    if body_html:
-        clean = re.sub(r'<style[^>]*>([\s\S]*?)</style>', '', clean, flags=re.IGNORECASE)
-        clean = re.sub(r'<script[^>]*>([\s\S]*?)</script>', '', clean, flags=re.IGNORECASE)
-
-    clean = re.sub(r"<[^>]+>", "", clean)
-    clean = html.unescape(clean).strip()
-    # Replace multiple whitespaces and newlines with a single space for a clean text preview
-    clean = re.sub(r'\s+', ' ', clean)
+    import re
+    # Remove CSS blocks
+    text = body
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    text = re.sub(r'\.[\w-]+\s*\{[^}]*\}', '', text)
+    text = re.sub(r'[\w-]+:\s*[\w#%.,\s]+;', '', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    clean = html.unescape(text).strip()
     
     if limit:
         return clean[:limit]
@@ -897,6 +896,14 @@ Ongoing conversations:
 Write the briefing script now:"""
 
 
+def is_valid_summary(text):
+    if not text or len(text) < 20:
+        return False
+    if '{' in text or '}' in text or '.css' in text.lower():
+        return False
+    return True
+
+
 @app.post("/voice/generate")
 async def generate_voice_endpoint(request: Request, user=Depends(get_current_user)):
     body = await request.json()
@@ -992,12 +999,12 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
         eid = e.get("id")
         if not eid:
             continue
-        has_real_summary = (
-            ai_results.get(eid, {}).get("summary") and 
-            not ai_results[eid]["summary"].startswith("FYI email from") and 
-            not ai_results[eid]["summary"].startswith("Low priority update") and
-            not ai_results[eid]["summary"].startswith("Email from")
-        )
+        summary = ai_results.get(eid, {}).get("summary")
+        if is_valid_summary(summary):
+            has_real_summary = True
+        else:
+            has_real_summary = False
+
         if not has_real_summary:
             emails_to_analyze.append(e)
             analysis_tasks.append(
@@ -1005,7 +1012,7 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
                     email_id=eid,
                     from_name=e.get("from_name", ""),
                     subject=e.get("subject", ""),
-                    body_preview=e.get("body_preview", "") or e.get("snippet", ""),
+                    body_preview=e.get("snippet", ""),  # use email snippet field instead of body_preview
                     from_email=e.get("from_email", ""),
                     user_email=user_email,
                     force_groq=True # Force Groq analysis to get a high quality LLM summary!
@@ -1608,6 +1615,13 @@ async def get_all_cached_results(user=Depends(get_current_user)):
     return {"cached": ai_results}
 
 async def analyze_single_email_helper(email_id: str, from_name: str, subject: str, body_preview: str, from_email: str, user_email: str, force_groq: bool = False) -> dict:
+    if body_preview:
+        body_preview = re.sub(r'<style[^>]*>.*?</style>', '', body_preview, flags=re.DOTALL)
+        body_preview = re.sub(r'\.[\w-]+\s*\{[^}]*\}', '', body_preview)
+        body_preview = re.sub(r'[\w-]+:\s*[\w#%.,\s]+;', '', body_preview)
+        body_preview = re.sub(r'<[^>]+>', '', body_preview)
+        body_preview = re.sub(r'\s+', ' ', body_preview).strip()
+
     loop = asyncio.get_event_loop()
     try:
         # Step 0: Check Firestore cache first to avoid redundant local and Groq runs
@@ -1744,7 +1758,15 @@ async def analyze_email(request: Request, user=Depends(get_current_user)):
 @app.post("/ai/analyze-batch")
 async def analyze_batch(request: Request, user=Depends(get_current_user)):
     body       = await request.json()
-    emails     = body.get("emails", [])[:10]
+    emails_to_analyze = [e for e in body.get("emails", []) 
+                          if not e.get("is_read", True)][:10]
+
+    if len(emails_to_analyze) < 10:
+        read_emails = [e for e in body.get("emails", []) 
+                        if e.get("is_read", True)]
+        emails_to_analyze += read_emails[:10-len(emails_to_analyze)]
+    emails = emails_to_analyze
+
     print(f"Analyzing batch of {len(emails)} emails")
     user_email = user.get("email", "")
     results    = {}
@@ -1760,6 +1782,12 @@ async def analyze_batch(request: Request, user=Depends(get_current_user)):
             from_name    = email.get("from_name", "")
             subject      = email.get("subject", "")
             body_preview = email.get("body_preview", "")
+            if body_preview:
+                body_preview = re.sub(r'<style[^>]*>.*?</style>', '', body_preview, flags=re.DOTALL)
+                body_preview = re.sub(r'\.[\w-]+\s*\{[^}]*\}', '', body_preview)
+                body_preview = re.sub(r'[\w-]+:\s*[\w#%.,\s]+;', '', body_preview)
+                body_preview = re.sub(r'<[^>]+>', '', body_preview)
+                body_preview = re.sub(r'\s+', ' ', body_preview).strip()
             from_email   = email.get("from_email", "")
 
             # Step 0: Check Firestore cache first to avoid redundant runs

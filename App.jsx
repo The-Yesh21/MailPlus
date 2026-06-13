@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Landing from './src/Landing';
 import DigestView from './src/DigestView';
+import PrivacyPolicy from './src/PrivacyPolicy';
+import Terms from './src/Terms';
 
 const EmailPreview = ({ html }) => {
   const iframeRef = useRef(null);
@@ -285,6 +287,15 @@ class ErrorBoundary extends React.Component {
 }
 
 const App = () => {
+  const path = window.location.pathname
+
+  if (path === '/privacy') {
+    return <PrivacyPolicy />
+  }
+  if (path === '/terms') {
+    return <Terms />
+  }
+
   const [user, setUser] = useState(null);
 
   const [mails, setMails] = useState([]);
