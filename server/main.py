@@ -1173,11 +1173,39 @@ async def generate_voice_endpoint(request: Request, user=Depends(get_current_use
     word_count = len(full_script.split())
     duration_secs = max(1, word_count // 2)
 
+    # Mark the unread emails as read in Gmail
+    marked_read_ids = []
+    if unread_emails and access_token:
+        async def mark_single_read(msg_id):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/modify",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        json={"removeLabelIds": ["UNREAD"]}
+                    )
+                    if resp.status_code == 200:
+                        return msg_id
+            except Exception as e:
+                print(f"Failed to mark email {msg_id} read during briefing: {e}")
+            return None
+
+        # Execute parallel requests to mark read
+        results = await asyncio.gather(*[mark_single_read(e["id"]) for e in unread_emails if e.get("id")])
+        marked_read_ids = [r for r in results if r is not None]
+
+    # Increment voice briefing stats in Firestore
+    try:
+        increment_user_stats(user_email, voice=1)
+    except Exception as e:
+        print(f"Failed to increment voice briefing stats: {e}")
+
     return {
         "url": audio_url, 
         "script": full_script, 
         "audio_base64": audio_base64,
-        "duration_estimate": f"~{duration_secs}s"
+        "duration_estimate": f"~{duration_secs}s",
+        "marked_read_ids": marked_read_ids
     }
 
 
